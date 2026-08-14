@@ -9,6 +9,7 @@ fetching or whether the posting behind it is relevant; that decision stays
 with the calling component.
 """
 
+import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Protocol
@@ -55,6 +56,24 @@ class PlaywrightPageRenderer:
 
     Playwright is imported lazily so importing this module (and running the
     test suite) does not require browser binaries to be installed.
+
+    Uses Playwright's *sync* API, driven inside a worker thread via
+    `asyncio.to_thread`, rather than its async API on the caller's own
+    event loop. Playwright's async API launches its Node driver via
+    `asyncio.create_subprocess_exec`, which only Windows' `ProactorEventLoop`
+    supports; this project's real server (`scripts/run_server.py`) must run
+    on a `SelectorEventLoop` instead, for `psycopg`'s async Postgres driver
+    (see that script's docstring) — the two requirements are incompatible on
+    the *same* loop. The sync API sidesteps this: called with no event loop
+    already running in the current thread (true for a `to_thread` worker),
+    it creates its own fresh loop for that thread via `asyncio.new_event_loop()`,
+    which still resolves to a `ProactorEventLoop` since only this thread's
+    loop *instance* was overridden for `psycopg`, never the process-wide
+    event loop *policy* — so Playwright's subprocess launch works there.
+    Each call starts and tears down its own browser rather than reusing one
+    across calls, since a Playwright sync-API browser/connection is bound to
+    the specific OS thread that created it, and `to_thread`'s executor does
+    not guarantee the same worker thread on every call.
     """
 
     name = "playwright"
@@ -62,38 +81,27 @@ class PlaywrightPageRenderer:
     def __init__(self, *, headless: bool = True, user_agent: str | None = None) -> None:
         self._headless = headless
         self._user_agent = user_agent
-        self._playwright = None
-        self._browser = None
 
-    async def _ensure_browser(self):
-        if self._browser is None:
-            from playwright.async_api import async_playwright
+    def _render_sync(self, url: str, timeout_seconds: float) -> str:
+        from playwright.sync_api import sync_playwright
 
-            self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(
-                headless=self._headless
-            )
-        return self._browser
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=self._headless)
+            try:
+                context = browser.new_context(
+                    **({"user_agent": self._user_agent} if self._user_agent else {})
+                )
+                try:
+                    page = context.new_page()
+                    page.goto(url, timeout=timeout_seconds * 1000, wait_until="load")
+                    return page.content()
+                finally:
+                    context.close()
+            finally:
+                browser.close()
 
     async def render(self, url: str, *, timeout_seconds: float) -> str:
-        browser = await self._ensure_browser()
-        context = await browser.new_context(
-            **({"user_agent": self._user_agent} if self._user_agent else {})
-        )
-        try:
-            page = await context.new_page()
-            await page.goto(url, timeout=timeout_seconds * 1000, wait_until="load")
-            return await page.content()
-        finally:
-            await context.close()
-
-    async def aclose(self) -> None:
-        if self._browser is not None:
-            await self._browser.close()
-            self._browser = None
-        if self._playwright is not None:
-            await self._playwright.stop()
-            self._playwright = None
+        return await asyncio.to_thread(self._render_sync, url, timeout_seconds)
 
 
 class PageFetchClient:

@@ -1,0 +1,56 @@
+# Local infrastructure for a real (non-fake) run of this app — PostgreSQL
+# and Kafka. See .env.example for the connection defaults this file is
+# built to match exactly (postgres/postgres@localhost:5432/career_platform,
+# localhost:9092), so the app's own built-in defaults work with zero
+# environment variables set. Ollama runs natively on the host, not here
+# (see about_project.md's local-first note) — this compose file only
+# covers the two services that are impractical to install directly on
+# Windows.
+#
+# Usage: docker compose up -d
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: career_platform
+    ports:
+      # Host port 5433, not 5432 — this machine already has a separate,
+      # pre-existing native PostgreSQL service bound to 5432 (unrelated to
+      # this project); mapping to a different host port avoids any conflict
+      # with it rather than competing for the same port. The .env this
+      # compose file's README section sets up points DATABASE_URL at 5433
+      # accordingly.
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  kafka:
+    image: apache/kafka:3.7.0
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+    environment:
+      # KRaft mode (no separate Zookeeper container needed).
+      KAFKA_NODE_ID: "0"
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+
+volumes:
+  postgres-data:
+  kafka-data:

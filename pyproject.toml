@@ -21,6 +21,7 @@ dependencies = [
     "beautifulsoup4",
     "ollama",
     "streamlit",
+    "python-dotenv",
 ]
 
 [project.optional-dependencies]
