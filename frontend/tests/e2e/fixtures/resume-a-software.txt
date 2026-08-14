@@ -1,0 +1,1 @@
+Alex Morgan. Senior Backend Engineer (Python/FastAPI). 8 years building distributed backend systems in Python. Skills: Python, FastAPI, Kafka, PostgreSQL, Docker, REST APIs. Built an event-driven order processing platform handling millions of events per day.

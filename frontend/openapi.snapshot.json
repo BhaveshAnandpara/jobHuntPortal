@@ -1,0 +1,2543 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AI-Powered Multi-Agent Career Opportunity Platform",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/users": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Create User",
+        "operationId": "create_user_users_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{user_id}/preferences": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get Preferences",
+        "operationId": "get_preferences_users__user_id__preferences_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPreferencesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Replace Preferences",
+        "operationId": "replace_preferences_users__user_id__preferences_put",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserPreferencesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPreferencesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/resumes": {
+      "post": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Upload Resume",
+        "operationId": "upload_resume_resumes_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateResumeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "List Resumes",
+        "operationId": "list_resumes_resumes_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ResumeResponse"
+                  },
+                  "title": "Response List Resumes Resumes Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/resumes/{resume_id}": {
+      "delete": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Delete Resume",
+        "operationId": "delete_resume_resumes__resume_id__delete",
+        "parameters": [
+          {
+            "name": "resume_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Resume Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/profiles": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "List Profiles",
+        "operationId": "list_profiles_profiles_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ResumeProfile"
+                  },
+                  "title": "Response List Profiles Profiles Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/profiles/{profile_id}": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Get Profile",
+        "operationId": "get_profile_profiles__profile_id__get",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeProfile"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/ingest-url": {
+      "post": {
+        "tags": [
+          "job-ingestion"
+        ],
+        "summary": "Ingest Job Url Route",
+        "description": "Submit a job posting URL for extraction.\n\nNote (flagged contract gap \u2014 see this agent's final report):\napi-contracts.md lists `user_id exists` as a validation rule producing\n404 `NOT_FOUND`, but dependency-graph.md documents zero runtime API\ncalls from Job Ingestion Service to User Service, so this handler has\nno documented way to verify `user_id` exists and does not attempt to.",
+        "operationId": "ingest_job_url_route_jobs_ingest_url_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestJobUrlRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "job-ingestion"
+        ],
+        "summary": "Get Job Route",
+        "description": "Read one job's canonical detail. See api-contracts.md#job-ingestion-service\nfor why this lives here rather than on Job Matching Service (the `jobs`\ntable's actual owner/writer, shared between this service and Job\nDiscovery Service \u2014 see database-ownership.md#jobs).",
+        "operationId": "get_job_route_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/job-sources": {
+      "post": {
+        "tags": [
+          "job-discovery"
+        ],
+        "summary": "Create Job Source",
+        "operationId": "create_job_source_job_sources_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateJobSourceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSourceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "job-discovery"
+        ],
+        "summary": "List Job Sources",
+        "operationId": "list_job_sources_job_sources_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JobSourceResponse"
+                  },
+                  "title": "Response List Job Sources Job Sources Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/matches": {
+      "get": {
+        "tags": [
+          "matching"
+        ],
+        "summary": "Get Job Matches",
+        "operationId": "get_job_matches_jobs__job_id__matches_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobMatchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/contacts": {
+      "get": {
+        "tags": [
+          "contacts"
+        ],
+        "summary": "Get Job Contacts",
+        "description": "See gap 1 in this module's docstring \u2014 no job-existence check is\npossible from this component.",
+        "operationId": "get_job_contacts_jobs__job_id__contacts_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ContactResponse"
+                  },
+                  "title": "Response Get Job Contacts Jobs  Job Id  Contacts Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/contacts/search": {
+      "post": {
+        "tags": [
+          "contacts"
+        ],
+        "summary": "Trigger Contact Search",
+        "description": "Thin producer only \u2014 publishes `ContactsRequestedEvent` onto the\nsame `contacts.requested` command topic Job Matching Service uses\nautomatically (kafka-topics.md's design-decision note grants this\ncomponent producer rights here for exactly this manual re-trigger,\n\"not a self-call\"). The result arrives later via `contacts.found`,\nhandled by this component's own `contacts.requested` consumer just\nlike the automatic path \u2014 see gap 2 in this module's docstring for why\nthe request body carries `user_id`/`company`/`title`.",
+        "operationId": "trigger_contact_search_jobs__job_id__contacts_search_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggerContactSearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerContactSearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/outreach": {
+      "get": {
+        "tags": [
+          "outreach"
+        ],
+        "summary": "List Outreach",
+        "operationId": "list_outreach_outreach_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/OutreachStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OutreachResponse"
+                  },
+                  "title": "Response List Outreach Outreach Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/outreach/{outreach_id}": {
+      "get": {
+        "tags": [
+          "outreach"
+        ],
+        "summary": "Get Outreach",
+        "operationId": "get_outreach_outreach__outreach_id__get",
+        "parameters": [
+          {
+            "name": "outreach_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Outreach Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutreachResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/outreach/{outreach_id}/approve": {
+      "post": {
+        "tags": [
+          "outreach"
+        ],
+        "summary": "Approve Outreach",
+        "operationId": "approve_outreach_outreach__outreach_id__approve_post",
+        "parameters": [
+          {
+            "name": "outreach_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Outreach Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveOutreachRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutreachResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/outreach/{outreach_id}/reject": {
+      "post": {
+        "tags": [
+          "outreach"
+        ],
+        "summary": "Reject Outreach",
+        "operationId": "reject_outreach_outreach__outreach_id__reject_post",
+        "parameters": [
+          {
+            "name": "outreach_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Outreach Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutreachResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/outreach/{outreach_id}/edit": {
+      "post": {
+        "tags": [
+          "outreach"
+        ],
+        "summary": "Edit Outreach",
+        "operationId": "edit_outreach_outreach__outreach_id__edit_post",
+        "parameters": [
+          {
+            "name": "outreach_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Outreach Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditOutreachRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutreachResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/applications": {
+      "get": {
+        "tags": [
+          "tracking"
+        ],
+        "summary": "List Applications",
+        "operationId": "list_applications_applications_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ApplicationStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ApplicationResponse"
+                  },
+                  "title": "Response List Applications Applications Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/applications/{application_id}": {
+      "get": {
+        "tags": [
+          "tracking"
+        ],
+        "summary": "Get Application",
+        "operationId": "get_application_applications__application_id__get",
+        "parameters": [
+          {
+            "name": "application_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Application Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/applications/{application_id}/status": {
+      "patch": {
+        "tags": [
+          "tracking"
+        ],
+        "summary": "Update Application Status",
+        "operationId": "update_application_status_applications__application_id__status_patch",
+        "parameters": [
+          {
+            "name": "application_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Application Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateApplicationStatusRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/applications/{application_id}/history": {
+      "get": {
+        "tags": [
+          "tracking"
+        ],
+        "summary": "Get Application History",
+        "operationId": "get_application_history_applications__application_id__history_get",
+        "parameters": [
+          {
+            "name": "application_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Application Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ApplicationHistoryResponse"
+                  },
+                  "title": "Response Get Application History Applications  Application Id  History Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApplicationHistoryResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "application_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Application Id"
+          },
+          "from_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApplicationStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "to_status": {
+            "$ref": "#/components/schemas/ApplicationStatus"
+          },
+          "changed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Changed At"
+          },
+          "triggered_by": {
+            "type": "string",
+            "title": "Triggered By"
+          },
+          "source_event_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "application_id",
+          "to_status",
+          "changed_at",
+          "triggered_by"
+        ],
+        "title": "ApplicationHistoryResponse"
+      },
+      "ApplicationResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Id"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "company": {
+            "type": "string",
+            "title": "Company"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ApplicationStatus"
+          },
+          "selected_resume_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Resume Id"
+          },
+          "match_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Score"
+          },
+          "matched_skills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Matched Skills",
+            "default": []
+          },
+          "missing_skills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missing Skills",
+            "default": []
+          },
+          "referral_contact_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referral Contact Id"
+          },
+          "applied_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Date"
+          },
+          "follow_up_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Follow Up Date"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "job_id",
+          "user_id",
+          "company",
+          "title",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ApplicationResponse"
+      },
+      "ApplicationStatus": {
+        "type": "string",
+        "enum": [
+          "DISCOVERED",
+          "MATCHED",
+          "SHORTLISTED",
+          "CONTACT_SEARCH",
+          "CONTACT_FOUND",
+          "OUTREACH_GENERATED",
+          "OUTREACH_APPROVED",
+          "OUTREACH_SENT",
+          "REFERRED",
+          "APPLIED",
+          "INTERVIEW",
+          "OFFER",
+          "REJECTED",
+          "IGNORED",
+          "WITHDRAWN"
+        ],
+        "title": "ApplicationStatus",
+        "description": "Owner: Tracking Service. See state-machines.md#opportunity-lifecycle-applicationstatus--applicationstatus.\n\nTerminal states: OFFER, REJECTED, IGNORED, WITHDRAWN."
+      },
+      "ApproveOutreachRequest": {
+        "properties": {
+          "final_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Message"
+          }
+        },
+        "type": "object",
+        "title": "ApproveOutreachRequest"
+      },
+      "ContactResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "full_name": {
+            "type": "string",
+            "title": "Full Name"
+          },
+          "headline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headline"
+          },
+          "company": {
+            "type": "string",
+            "title": "Company"
+          },
+          "contact_type": {
+            "$ref": "#/components/schemas/ContactType"
+          },
+          "profile_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Url"
+          },
+          "relevance_score": {
+            "type": "number",
+            "title": "Relevance Score"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ContactStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "full_name",
+          "company",
+          "contact_type",
+          "relevance_score",
+          "status"
+        ],
+        "title": "ContactResponse"
+      },
+      "ContactStatus": {
+        "type": "string",
+        "enum": [
+          "DISCOVERED",
+          "RANKED",
+          "ARCHIVED"
+        ],
+        "title": "ContactStatus",
+        "description": "Owner: Contact Discovery Service. See\nstate-machines.md#contact-lifecycle-contactstatus--contactstatus."
+      },
+      "ContactType": {
+        "type": "string",
+        "enum": [
+          "PRACTITIONER",
+          "TEAM_LEAD",
+          "HIRING_MANAGER",
+          "RECRUITER",
+          "EXECUTIVE",
+          "DEPARTMENT_LEADER",
+          "OTHER"
+        ],
+        "title": "ContactType",
+        "description": "Owner: Contact Discovery Service.\n\nDeliberately profession-generic \u2014 captures functional tier only\n(practitioner vs. lead vs. hiring manager vs. recruiter vs. executive).\nA profession-specific title (e.g. \"Senior Mechanical Engineer\") belongs\nin `Contact.headline` as free text, never as a new enum member here. See\nshared-types.md#shared-enums."
+      },
+      "CreateJobSourceRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "type": {
+            "$ref": "#/components/schemas/JobSourceType"
+          },
+          "query_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Config"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "name",
+          "type",
+          "enabled"
+        ],
+        "title": "CreateJobSourceRequest"
+      },
+      "CreateResumeRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "file_name": {
+            "type": "string",
+            "title": "File Name"
+          },
+          "file_content": {
+            "type": "string",
+            "title": "File Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "file_name",
+          "file_content"
+        ],
+        "title": "CreateResumeRequest"
+      },
+      "CreateUserRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "display_name"
+        ],
+        "title": "CreateUserRequest"
+      },
+      "EditOutreachRequest": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "EditOutreachRequest"
+      },
+      "EducationEntry": {
+        "properties": {
+          "institution": {
+            "type": "string",
+            "title": "Institution"
+          },
+          "degree": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degree"
+          },
+          "field_of_study": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Field Of Study"
+          },
+          "graduation_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graduation Year"
+          }
+        },
+        "type": "object",
+        "required": [
+          "institution"
+        ],
+        "title": "EducationEntry"
+      },
+      "EventType": {
+        "type": "string",
+        "enum": [
+          "JOB_DISCOVERED",
+          "PROFILE_UPDATED",
+          "JOB_MATCHED",
+          "JOB_SHORTLISTED",
+          "CONTACTS_REQUESTED",
+          "CONTACTS_FOUND",
+          "OUTREACH_GENERATED",
+          "OUTREACH_APPROVED",
+          "OUTREACH_SENT",
+          "APPLICATION_UPDATED"
+        ],
+        "title": "EventType",
+        "description": "Owner: shared, additive only. One member per Kafka event payload\ntype. See event-contracts.md#eventtype-enum-members."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "IngestJobUrlRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "url"
+        ],
+        "title": "IngestJobUrlRequest"
+      },
+      "JobMatchResponse": {
+        "properties": {
+          "job_match_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Match Id"
+          },
+          "selected_profile_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Selected Profile Id"
+          },
+          "selected_resume_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Selected Resume Id"
+          },
+          "match_score": {
+            "type": "number",
+            "title": "Match Score"
+          },
+          "matched_skills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Matched Skills",
+            "default": []
+          },
+          "missing_skills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missing Skills",
+            "default": []
+          },
+          "recommendation": {
+            "$ref": "#/components/schemas/MatchRecommendation"
+          },
+          "profile_scores": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileMatchScore"
+            },
+            "type": "array",
+            "title": "Profile Scores",
+            "default": []
+          },
+          "matched_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Matched At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_match_id",
+          "selected_profile_id",
+          "selected_resume_id",
+          "match_score",
+          "recommendation",
+          "matched_at"
+        ],
+        "title": "JobMatchResponse"
+      },
+      "JobProcessingStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING",
+          "NORMALIZED",
+          "MATCHED",
+          "FAILED"
+        ],
+        "title": "JobProcessingStatus",
+        "description": "Owner: Job Ingestion / Job Discovery Service."
+      },
+      "JobResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "company": {
+            "type": "string",
+            "title": "Company"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "extracted_skills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Extracted Skills",
+            "default": []
+          },
+          "experience_required": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Experience Required"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "processing_status": {
+            "$ref": "#/components/schemas/JobProcessingStatus"
+          },
+          "discovered_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Discovered At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "company",
+          "title",
+          "description",
+          "processing_status",
+          "discovered_at"
+        ],
+        "title": "JobResponse"
+      },
+      "JobSourceResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "type": {
+            "$ref": "#/components/schemas/JobSourceType"
+          },
+          "query_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Config"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "name",
+          "type",
+          "enabled"
+        ],
+        "title": "JobSourceResponse"
+      },
+      "JobSourceType": {
+        "type": "string",
+        "enum": [
+          "MANUAL_URL",
+          "LINKEDIN",
+          "INDEED",
+          "COMPANY_CAREERS_PAGE",
+          "OTHER"
+        ],
+        "title": "JobSourceType",
+        "description": "Owner: Job Discovery Service. Extensible \u2014 adding a source is additive."
+      },
+      "MatchRecommendation": {
+        "type": "string",
+        "enum": [
+          "SHORTLIST",
+          "BORDERLINE",
+          "IGNORE"
+        ],
+        "title": "MatchRecommendation",
+        "description": "Owner: Job Matching Service."
+      },
+      "OutreachChannel": {
+        "type": "string",
+        "enum": [
+          "EMAIL",
+          "LINKEDIN_MESSAGE",
+          "LINKEDIN_CONNECTION_REQUEST",
+          "OTHER"
+        ],
+        "title": "OutreachChannel",
+        "description": "Owner: Outreach Service."
+      },
+      "OutreachResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Id"
+          },
+          "contact_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Contact Id"
+          },
+          "channel": {
+            "$ref": "#/components/schemas/OutreachChannel"
+          },
+          "draft_message": {
+            "type": "string",
+            "title": "Draft Message"
+          },
+          "final_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Message"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OutreachStatus"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "sent_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sent At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "job_id",
+          "contact_id",
+          "channel",
+          "draft_message",
+          "status",
+          "generated_at"
+        ],
+        "title": "OutreachResponse"
+      },
+      "OutreachStatus": {
+        "type": "string",
+        "enum": [
+          "DRAFT",
+          "PENDING_APPROVAL",
+          "APPROVED",
+          "REJECTED",
+          "EDITED",
+          "SENT",
+          "SEND_FAILED"
+        ],
+        "title": "OutreachStatus",
+        "description": "Owner: Outreach Service. See state-machines.md#outreach-lifecycle-outreachstatus--outreachstatus."
+      },
+      "ProfileMatchScore": {
+        "properties": {
+          "profile_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Profile Id"
+          },
+          "resume_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Resume Id"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score"
+          },
+          "matched_skills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Matched Skills",
+            "default": []
+          },
+          "missing_skills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missing Skills",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "profile_id",
+          "resume_id",
+          "score"
+        ],
+        "title": "ProfileMatchScore"
+      },
+      "ProfileStatus": {
+        "type": "string",
+        "enum": [
+          "ACTIVE",
+          "ARCHIVED"
+        ],
+        "title": "ProfileStatus",
+        "description": "Owner: Resume/Profile Service. See\nstate-machines.md#candidateprofile-lifecycle-candidateprofilestatus--profilestatus."
+      },
+      "RemoteWorkPreference": {
+        "type": "string",
+        "enum": [
+          "REMOTE",
+          "HYBRID",
+          "ONSITE",
+          "NO_PREFERENCE"
+        ],
+        "title": "RemoteWorkPreference",
+        "description": "Owner: User Service."
+      },
+      "ResumeProfile": {
+        "properties": {
+          "profile_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Profile Id"
+          },
+          "resume_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Resume Id"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "skills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Skills",
+            "default": []
+          },
+          "experience_years": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Experience Years"
+          },
+          "seniority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seniority"
+          },
+          "education": {
+            "items": {
+              "$ref": "#/components/schemas/EducationEntry"
+            },
+            "type": "array",
+            "title": "Education",
+            "default": []
+          },
+          "certifications": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Certifications",
+            "default": []
+          },
+          "projects": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Projects",
+            "default": []
+          },
+          "industries": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Industries",
+            "default": []
+          },
+          "target_roles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Target Roles",
+            "default": []
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProfileStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "profile_id",
+          "resume_id",
+          "user_id",
+          "title",
+          "status"
+        ],
+        "title": "ResumeProfile",
+        "description": "The read/composition type combining a Resume and its derived\nCandidateProfile. Used whenever another component needs \"a user's\nprofile\" \u2014 most notably as an input to Job Matching.\n\nProduced by: Resume/Profile Service (GET /profiles, GET /profiles/{id}).\nConsumed by: Job Matching Service (as JobMatchingState.profiles).\nNot persisted directly \u2014 assembled on read from resumes +\ncandidate_profiles."
+      },
+      "ResumeResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "file_name": {
+            "type": "string",
+            "title": "File Name"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ResumeStatus"
+          },
+          "uploaded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Uploaded At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "file_name",
+          "status",
+          "uploaded_at"
+        ],
+        "title": "ResumeResponse"
+      },
+      "ResumeStatus": {
+        "type": "string",
+        "enum": [
+          "UPLOADED",
+          "PARSING",
+          "PARSED",
+          "PARSE_FAILED",
+          "ARCHIVED"
+        ],
+        "title": "ResumeStatus",
+        "description": "Owner: Resume/Profile Service. See state-machines.md#resume-lifecycle-resumestatus--resumestatus."
+      },
+      "TriggerContactSearchRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "company": {
+            "type": "string",
+            "title": "Company"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "company",
+          "title"
+        ],
+        "title": "TriggerContactSearchRequest",
+        "description": "See this module's docstring \u2014 an additive gap-resolution type, not\npart of api-contracts.md's documented (path-param-only) input."
+      },
+      "TriggerContactSearchResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Id"
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Requested At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "requested_at"
+        ],
+        "title": "TriggerContactSearchResponse"
+      },
+      "UpdateApplicationStatusRequest": {
+        "properties": {
+          "new_status": {
+            "$ref": "#/components/schemas/ApplicationStatus"
+          },
+          "applied_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Date"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "new_status"
+        ],
+        "title": "UpdateApplicationStatusRequest"
+      },
+      "UpdateUserPreferencesRequest": {
+        "properties": {
+          "target_roles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Target Roles",
+            "default": []
+          },
+          "target_locations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Target Locations",
+            "default": []
+          },
+          "remote_preference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RemoteWorkPreference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "excluded_companies": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Excluded Companies",
+            "default": []
+          },
+          "min_salary": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Salary"
+          },
+          "salary_currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Salary Currency"
+          }
+        },
+        "type": "object",
+        "title": "UpdateUserPreferencesRequest"
+      },
+      "UserPreferencesResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "target_roles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Target Roles",
+            "default": []
+          },
+          "target_locations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Target Locations",
+            "default": []
+          },
+          "remote_preference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RemoteWorkPreference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "excluded_companies": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Excluded Companies",
+            "default": []
+          },
+          "min_salary": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Salary"
+          },
+          "salary_currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Salary Currency"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "updated_at"
+        ],
+        "title": "UserPreferencesResponse"
+      },
+      "UserResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "display_name",
+          "created_at"
+        ],
+        "title": "UserResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

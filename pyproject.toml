@@ -1,0 +1,43 @@
+[project]
+name = "career-opportunity-platform"
+version = "0.1.0"
+description = "AI-powered, profession-independent, multi-agent career opportunity platform."
+requires-python = ">=3.11"
+
+# Dependency versions are intentionally left unpinned at this contract
+# stage — implementing agents should pin exact versions when a component
+# first needs a dependency. Names below reflect about_project.md's
+# technology table only; add nothing beyond it here.
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic>=2",
+    "langgraph",
+    "sqlalchemy>=2",
+    "alembic",
+    "psycopg[binary]",
+    "confluent-kafka",
+    "playwright",
+    "beautifulsoup4",
+    "ollama",
+    "streamlit",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "aiosqlite",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

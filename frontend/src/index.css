@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+/**
+ * Design tokens per docs/frontend/design-system.md. Owned by
+ * frontend-design-agent — feature agents consume these via Tailwind
+ * utility classes / the shared components in src/components, never by
+ * hard-coding a hex value in a feature folder.
+ *
+ * Status badge colors map to *categories* (in-progress / needs-attention /
+ * positive / negative / neutral), not individual backend enum values — see
+ * design-system.md#status-badges and src/utils/status.ts, which maps every
+ * backend enum value to one of these categories.
+ *
+ * Every foreground/background pairing below is verified >= 4.5:1 contrast
+ * (WCAG AA for text under 18pt/14pt-bold, which covers the 12px badge/meta
+ * text these colors are used for) — see the ratios recorded next to each
+ * pair. Do not swap in a lighter foreground shade without re-checking
+ * contrast against its paired `-bg` token.
+ */
+@theme {
+  --color-brand: #2563eb;
+  --color-brand-hover: #1d4ed8;
+
+  /* blue-700 on blue-50 = 6.16:1 */
+  --color-status-progress: #1d4ed8;
+  --color-status-progress-bg: #eff6ff;
+  /* amber-700 on amber-50 = 4.84:1 */
+  --color-status-attention: #b45309;
+  --color-status-attention-bg: #fffbeb;
+  /* green-700 on green-50 = 4.79:1 */
+  --color-status-positive: #15803d;
+  --color-status-positive-bg: #f0fdf4;
+  /* red-700 on red-50 = 5.91:1 */
+  --color-status-negative: #b91c1c;
+  --color-status-negative-bg: #fef2f2;
+  /* gray-600 on gray-50 = 7.23:1 */
+  --color-status-neutral: #4b5563;
+  --color-status-neutral-bg: #f9fafb;
+}
+
+body {
+  color-scheme: light;
+  background-color: #ffffff;
+}
+
+/**
+ * Typography scale (docs/frontend/design-system.md's "one display size, one
+ * heading size, one body size, one small/meta size — not five"). This is a
+ * naming convention over plain Tailwind utilities, not new CSS classes, so
+ * every feature agent applies the same four sizes instead of picking
+ * arbitrary ones:
+ *
+ *   display -> text-2xl font-semibold   (rare: e.g. a welcome/onboarding
+ *                                         headline — no page uses more than
+ *                                         one)
+ *   heading -> text-xl font-semibold    (PageHeader's page title — the
+ *                                         normal top-of-page heading)
+ *   body    -> text-sm                  (default body/UI text)
+ *   meta    -> text-xs                  (StatusBadge, FieldError, timestamps,
+ *                                         helper/secondary text)
+ */

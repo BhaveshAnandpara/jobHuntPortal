@@ -1,0 +1,1 @@
+TRIGGER_PARSE_FAILURE. This resume is deliberately unparseable for E2E replace-failure-safety testing.

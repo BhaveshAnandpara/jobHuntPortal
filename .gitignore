@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+.venv/
+venv/
+env/
+
+.env
+*.db
+*.sqlite3
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+.vscode/
+.idea/
+
+# Runtime application logs (infrastructure/logging) — never committed.
+logs/
+*.log
