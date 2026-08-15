@@ -80,19 +80,17 @@ class OllamaProvider:
                 # Ollama supports two structured-output modes: `format="json"`
                 # (generic "must be valid JSON" constraint) and
                 # `format=<json_schema>` (full grammar-constrained decoding
-                # to that exact schema). The latter was used here originally,
-                # but reproducibly hangs past a 60s+ client timeout with
-                # small models like llama3.2:1b on `ExtractedJobFields`'
-                # schema (optional/nullable fields compile to `anyOf` in
-                # Pydantic's JSON Schema output, a known trigger for
-                # combinatorial grammar blowup in llama.cpp-based backends —
-                # https://github.com/ollama/ollama grammar/schema issues).
-                # `format="json"` avoids that: it's the same "guarantee
-                # syntactically valid JSON" guarantee `LLMClient` actually
-                # needs (it parses+validates the result itself either way,
-                # see `structured.py`'s `parse_structured`/repair loop), just
-                # without walking the caller's full schema as a grammar.
-                format="json" if request.response_schema else None,
+                # to that exact schema, structurally preventing malformed
+                # shapes and schema-echo responses — see
+                # `structured.py`'s `_looks_like_schema_echo`). Grammar mode
+                # reproducibly hung past a 60s+ client timeout on small
+                # models like llama3.2:1b (optional/nullable fields compile
+                # to `anyOf` in Pydantic's JSON Schema output, a known
+                # trigger for combinatorial grammar blowup in llama.cpp-based
+                # backends). Now that `LLMConfig.model`/`timeout_seconds`
+                # point at a larger model with headroom to be slow, grammar
+                # mode is worth the correctness guarantee again.
+                format=request.response_schema if request.response_schema else None,
                 options={"temperature": request.temperature},
             )
         except ConnectionError as exc:
