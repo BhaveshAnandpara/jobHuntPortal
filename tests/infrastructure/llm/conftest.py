@@ -22,6 +22,16 @@ class Widget(BaseModel):
     count: int
 
 
+class TaggedWidget(BaseModel):
+    """A `Widget` variant with a non-Optional list field, for exercising
+    `parse_structured`'s null-list coercion (structured.py's
+    `_coerce_null_lists`) — a small model routinely emits `null` instead of
+    `[]` for a list field it has nothing to report for."""
+
+    name: str
+    tags: list[str] = []
+
+
 class FakeProvider:
     """`LLMProvider`-compatible test double.
 

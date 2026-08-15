@@ -13,7 +13,7 @@ from infrastructure.llm.structured import (
     repair_prompt,
     schema_instructions,
 )
-from tests.infrastructure.llm.conftest import Widget
+from tests.infrastructure.llm.conftest import TaggedWidget, Widget
 
 
 def test_schema_instructions_embeds_json_schema():
@@ -74,6 +74,38 @@ def test_parse_structured_records_attempts():
     with pytest.raises(LLMProviderError) as excinfo:
         parse_structured("nope", Widget, provider="fake", model="llama3", attempts=4)
     assert excinfo.value.attempts == 4
+
+
+def test_parse_structured_coerces_explicit_null_list_to_empty_list():
+    """A small model emitting `"tags": null` instead of `"tags": []` must
+    not fail validation — see structured.py's `_coerce_null_lists`."""
+    result = parse_structured(
+        '{"name": "gizmo", "tags": null}',
+        TaggedWidget,
+        provider="fake",
+        model="llama3.2:1b",
+    )
+    assert result == TaggedWidget(name="gizmo", tags=[])
+
+
+def test_parse_structured_leaves_absent_list_field_to_its_own_default():
+    result = parse_structured(
+        '{"name": "gizmo"}',
+        TaggedWidget,
+        provider="fake",
+        model="llama3.2:1b",
+    )
+    assert result.tags == []
+
+
+def test_parse_structured_leaves_populated_list_field_untouched():
+    result = parse_structured(
+        '{"name": "gizmo", "tags": ["a", "b"]}',
+        TaggedWidget,
+        provider="fake",
+        model="llama3.2:1b",
+    )
+    assert result.tags == ["a", "b"]
 
 
 def test_repair_prompt_includes_original_prompt_and_problem():

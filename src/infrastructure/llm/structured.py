@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import json
 import time
-from typing import TypeVar
+from types import UnionType
+from typing import TypeVar, Union, get_args, get_origin
 
 from pydantic import BaseModel, ValidationError
 
@@ -59,6 +60,39 @@ def extract_json_object(text: str) -> str:
     return text[start : end + 1]
 
 
+def _is_list_annotation(annotation: object) -> bool:
+    """True for `list[...]` and for a union that includes `list[...]`
+    (covers both `list[str]` and `list[str] | None`)."""
+    origin = get_origin(annotation)
+    if origin is list:
+        return True
+    if origin is UnionType or origin is Union:
+        return any(_is_list_annotation(arg) for arg in get_args(annotation))
+    return False
+
+
+def _coerce_null_lists(parsed: dict, schema: type[BaseModel]) -> None:
+    """Rewrite an explicit JSON `null` to `[]` for any list-typed field,
+    in place.
+
+    Small local models routinely emit `null` instead of `[]` for a
+    list-typed field it has nothing to report for (e.g. "no skills found"),
+    even when told to return an empty list — this is a response-shape quirk
+    of the model, not a meaningful "no value" the caller's schema should
+    have to special-case. Pydantic only applies a field's default when the
+    key is *absent*; an explicit `null` for a non-Optional `list[str]`
+    field fails validation instead of falling back to the default, so every
+    structured-output schema in this codebase (`ExtractedJobFields`,
+    `ProfileScoringOutput`, `ExtractedResumeProfile`, ...) was equally
+    exposed to this — hence the fix living once here, at the shared
+    JSON-to-schema seam every structured LLM call passes through, rather
+    than in each schema.
+    """
+    for name, field in schema.model_fields.items():
+        if parsed.get(name, ...) is None and _is_list_annotation(field.annotation):
+            parsed[name] = []
+
+
 def parse_structured(
     text: str,
     schema: type[T],
@@ -79,6 +113,9 @@ def parse_structured(
             attempts=attempts,
             raw_text=text,
         ) from exc
+
+    if isinstance(parsed, dict):
+        _coerce_null_lists(parsed, schema)
 
     try:
         return schema.model_validate(parsed)

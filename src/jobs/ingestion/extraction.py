@@ -71,17 +71,97 @@ class StructuredExtractor(Protocol):
         """Run `prompt` and parse the response into `schema`."""
 
 
-_EXTRACTION_PROMPT = """\
-Extract the job posting described by the page content below.
+_EXTRACTION_PROMPT = _EXTRACTION_PROMPT = """
+You are a strict information extraction system.
 
-Report only what the page states. Do not infer, translate, or normalize the
-role into any particular profession or industry vocabulary — this platform
-serves every profession, so preserve the posting's own wording for the title,
-location, skills, and experience requirement. If a field is not stated on the
-page, return null for it rather than guessing.
+Your task is to extract structured job-posting data from the page content below.
+
+IMPORTANT RULES:
+
+1. Use ONLY information explicitly present in the page content.
+2. Do NOT infer, guess, rewrite, normalize, translate, or complete missing information.
+3. If a field is not explicitly supported by the page content, return null.
+4. Read the ENTIRE page content before producing the answer.
+5. Information may appear anywhere in the page:
+   - page title
+   - header
+   - breadcrumb
+   - company/logo text
+   - job summary
+   - responsibilities
+   - requirements
+   - qualifications
+   - benefits
+   - footer metadata
+6. Do not assume the main job-description paragraph contains every field.
+
+Extract these fields:
+
+company
+- The employer/company/organization offering the job.
+- Look especially in the page title, header, logo text, breadcrumb, employer section, or job metadata.
+- Do not use another company mentioned only as a customer, partner, client, or technology provider.
+- If the employer cannot be determined explicitly, return null.
+
+title
+- The exact job title as written on the page.
+- Prefer the primary job-posting heading/header.
+- Do not rewrite or normalize the title.
+- If no explicit job title is present, return null.
+
+location
+- The exact location text stated for the job.
+- Look in the job header, metadata, location badges, summary, or body.
+- Preserve wording such as "Pune, India", "Remote", "Hybrid", or "Bengaluru / Hyderabad".
+- Do not infer a location from company headquarters or other unrelated text.
+- If no job location is explicitly stated, return null.
+
+description
+- A concise extraction of what the role is and what the person will do.
+- Use the posting's overview, summary, role description, and responsibilities.
+- Do not use the job title alone as the description.
+- Do not include unrelated company marketing text unless it directly describes the role.
+- If the role itself is not described, return null.
+
+extracted_skills
+- Return only skills, technologies, tools, methods, certifications, qualifications, or domain capabilities explicitly required or preferred by the posting.
+- Prefer requirements/qualifications/skills sections over responsibilities.
+- Do not include:
+  - company name
+  - job title
+  - location
+  - generic section headings
+  - vague duties such as "work with the team"
+- Keep the original wording where practical.
+- Return null if no explicit skills or qualifications are stated.
+
+experience_required
+- Extract only explicitly stated experience requirements.
+- Examples:
+  - "2+ years of experience"
+  - "3-5 years"
+  - "minimum 5 years in mechanical design"
+  - "experience with enterprise recruiting"
+- Do not infer years of experience from seniority words such as "Senior", "Lead", or "Manager".
+- If no explicit experience requirement is stated, return null.
+
+OUTPUT RULES:
+
+- Return ONLY the structured result required by the provided schema.
+- Do not add explanations.
+- Do not add markdown.
+- Do not include evidence or commentary unless the schema explicitly asks for it.
+- Use null for every missing field.
+- Do not fabricate values to avoid null.
+
+Before finalizing each field, ask internally:
+"Can I point to explicit text in the page that supports this value?"
+If not, return null.
 
 PAGE CONTENT:
+----------------
 {page_content}
+----------------
 """
 
 
