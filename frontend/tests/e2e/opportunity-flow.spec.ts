@@ -24,6 +24,11 @@ import {
 
 test('an invalid job URL shows an inline error and never navigates away', async ({ page }) => {
   await createIdentity(page, { emailPrefix: 'oppflow-invalid' })
+  // The submit form is gated on having an active profile — see
+  // JobUrlSubmitForm.tsx — so a resume upload is a required precondition
+  // here even though this test is only exercising client-side URL format
+  // validation, not matching.
+  await uploadResumeAndWaitTerminal(page, RESUME_A_FILE)
   await page.goto('/')
   await page.getByLabel('Paste a job posting URL').fill(INVALID_URL_INPUT)
   await page.getByRole('button', { name: 'Submit' }).click()
@@ -88,20 +93,19 @@ test('cross-profession: an HR-aligned job selects the HR profile (Profile C)', a
   await expect(page.getByText('Talent Acquisition').first()).toBeVisible()
 })
 
-test('an opportunity with no uploaded resumes stays in Analyzing without a fabricated match', async ({ page }) => {
+test('the job submission form is blocked until a resume is uploaded, not left to fabricate a match', async ({ page }) => {
   await createIdentity(page, { emailPrefix: 'oppflow-noprofiles' })
-  // Deliberately no resume upload — NO_PROFILES_AVAILABLE path.
-  await submitJobUrl(page, JOB2_URL)
-  await openOpportunityByTitle(page, JOB2_TITLE)
-
-  // Matching Service marks the job FAILED (no ACTIVE profiles) and never
-  // publishes jobs.matched, so the opportunity has no reason to leave
-  // DISCOVERED/"Analyzing…" — the UI must not invent a score.
-  await page.waitForTimeout(3000) // give the drain loop a few cycles to (not) advance it
-  // `.first()` — this same "Analyzing…" label legitimately appears twice:
-  // the page-header ApplicationStatus badge, and the lifecycle timeline's
-  // own "Analyzing…" entry (per LifecycleTimeline's per-status labeling) —
-  // both correctly reflect the same DISCOVERED status, not a bug.
-  await expect(page.getByText('Analyzing…').first()).toBeVisible()
-  await expect(page.getByText('Not yet analyzed').first()).toBeVisible()
+  // Deliberately no resume upload. A job matched against zero ACTIVE
+  // profiles is auto-IGNOREd (NO_PROFILES_AVAILABLE short-circuit in
+  // workflows/langgraph/job_matching/nodes.py), and there is no retroactive
+  // re-match once a resume is added later (matching/consumers.py's
+  // handle_profile_updated is a deferred stub) — so a job submitted before
+  // any active profile exists can never be matched. JobUrlSubmitForm blocks
+  // submission entirely in this state rather than letting that happen, so
+  // this test now verifies the block itself rather than a post-submission
+  // "Analyzing…" state that the UI no longer allows a user to reach.
+  await page.goto('/')
+  await expect(page.getByLabel('Paste a job posting URL')).not.toBeVisible()
+  await expect(page.getByText(/Upload a resume before adding opportunities/)).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Upload a resume' })).toBeVisible()
 })

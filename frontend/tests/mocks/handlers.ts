@@ -101,6 +101,7 @@ export const profileHandlers = [
         experience_years: 5,
         seniority: 'Senior',
         education: [],
+        status: 'ACTIVE',
       },
     ]),
   ),
@@ -115,6 +116,7 @@ export const profileHandlers = [
       experience_years: 5,
       seniority: 'Senior',
       education: [],
+      status: 'ACTIVE',
     }),
   ),
 ]

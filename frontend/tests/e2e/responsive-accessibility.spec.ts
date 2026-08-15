@@ -189,6 +189,10 @@ test.describe('accessibility', () => {
 
   test('loading and error states are announced, not silent or color-only', async ({ page }) => {
     await createIdentity(page, { emailPrefix: 'a11y-announce' })
+    // The submit form is gated on having an active profile — see
+    // JobUrlSubmitForm.tsx — so a resume upload is a required precondition
+    // for both assertions below.
+    await uploadResumeAndWaitTerminal(page, RESUME_B_FILE)
 
     // Invalid URL inline error uses role="alert" (an assertive live region),
     // not just red text a screen-reader user would never hear about.

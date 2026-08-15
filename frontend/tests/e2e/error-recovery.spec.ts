@@ -20,6 +20,11 @@ import { JOB1_TITLE, JOB1_URL, JOB_FETCH_FAIL_URL, RESUME_B_FILE } from './fixtu
 
 test('a job-fetch/ingestion failure shows a normalized inline error, never a raw exception', async ({ page }) => {
   await createIdentity(page, { emailPrefix: 'errors-ingest-fail' })
+  // The submit form is gated on having an active profile — see
+  // JobUrlSubmitForm.tsx — so a resume upload is a required precondition
+  // here even though this test is only exercising the ingestion-failure
+  // error path, not matching.
+  await uploadResumeAndWaitTerminal(page, RESUME_B_FILE)
   await page.goto('/')
   await page.getByLabel('Paste a job posting URL').fill(JOB_FETCH_FAIL_URL)
   await page.getByRole('button', { name: 'Submit' }).click()
