@@ -112,11 +112,11 @@ async def test_multi_resume_flow_selects_the_fitting_profile(
             llm_response(_HR_FIELDS),
         ]
     )
-    harness.upload_resume(user["id"], "swe_resume.txt", _SWE_RESUME_TEXT)
-    mech_resume = harness.upload_resume(user["id"], "mech_resume.txt", _MECH_RESUME_TEXT)
-    harness.upload_resume(user["id"], "hr_resume.txt", _HR_RESUME_TEXT)
+    harness.upload_resume(user, "swe_resume.txt", _SWE_RESUME_TEXT)
+    mech_resume = harness.upload_resume(user, "mech_resume.txt", _MECH_RESUME_TEXT)
+    harness.upload_resume(user, "hr_resume.txt", _HR_RESUME_TEXT)
 
-    profiles = harness.list_profiles(user["id"])
+    profiles = harness.list_profiles(user)
     assert len(profiles) == 3
     titles = {p["title"] for p in profiles}
     assert titles == {
@@ -138,10 +138,10 @@ async def test_multi_resume_flow_selects_the_fitting_profile(
             )
         },
     )
-    job = harness.ingest_job(user["id"], JOB_URL)
+    job = harness.ingest_job(user, JOB_URL)
     job_id = job["id"]
 
-    harness.sync_matching_profiles(user["id"])
+    harness.sync_matching_profiles(user)
     harness.set_matching_preferences(FakeUserPreferencesClient({}))
 
     # Scripted results keyed by each profile's unique "CANDIDATE PROFILE\nTitle: ..."
@@ -220,7 +220,7 @@ async def test_multi_resume_flow_selects_the_fitting_profile(
     assert len(contacts_requested) == 1
 
     applications = harness.client.get(
-        "/applications", params={"user_id": user["id"]}
+        "/applications", headers=harness.auth_headers(user)
     ).json()
     assert len(applications) == 1
     assert applications[0]["selected_resume_id"] == mech_resume["id"]

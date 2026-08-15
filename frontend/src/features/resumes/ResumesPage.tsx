@@ -32,7 +32,6 @@ import { Button, Card, Dialog, EmptyState, ErrorState, PageHeader, Skeleton, Sta
 import { useDeleteResume, useResumes, useUploadResume } from '../../api/resumes'
 import { useProfiles } from '../../api/profiles'
 import { toApiError } from '../../api/client'
-import { useCurrentUserId } from '../../hooks/identity'
 import { formatDate } from '../../utils/format'
 import type { ResumeProfile, ResumeResponse } from '../../api/types'
 
@@ -45,9 +44,6 @@ function buildProfilesByResumeId(profiles: ResumeProfile[] | undefined): Map<str
 }
 
 export function ResumesPage() {
-  const { userId } = useCurrentUserId()
-  const activeUserId = userId ?? ''
-
   // Resume ids (from any successful upload, plain or replace) whose eventual
   // PARSED transition should trigger a `profiles` refetch — see the effect
   // below. A resume's profile is only guaranteed to exist once parsing
@@ -61,8 +57,8 @@ export function ResumesPage() {
   // list would otherwise go straight from `[]` to `[]`.
   const [trackedResumeIds, setTrackedResumeIds] = useState<ReadonlySet<string>>(new Set())
 
-  const resumesQuery = useResumes(activeUserId, { pendingResumeIds: trackedResumeIds })
-  const profilesQuery = useProfiles(activeUserId)
+  const resumesQuery = useResumes({ pendingResumeIds: trackedResumeIds })
+  const profilesQuery = useProfiles()
   const uploadMutation = useUploadResume()
   const deleteMutation = useDeleteResume()
 
@@ -122,7 +118,7 @@ export function ResumesPage() {
         setAwaitingReplace(null)
         void (async () => {
           try {
-            await deleteMutation.mutateAsync({ resumeId: oldResume.id, userId: activeUserId })
+            await deleteMutation.mutateAsync({ resumeId: oldResume.id })
             toast.success(`Replaced "${oldResume.file_name}".`)
           } catch (error) {
             const apiError = toApiError(error)
@@ -142,14 +138,12 @@ export function ResumesPage() {
         )
       }
     }
-  }, [resumesQuery.data, awaitingReplace, trackedResumeIds, activeUserId, deleteMutation, profilesQuery])
+  }, [resumesQuery.data, awaitingReplace, trackedResumeIds, deleteMutation, profilesQuery])
 
   async function handleFilesSelected(files: File[]) {
-    if (!activeUserId || files.length === 0) return
+    if (files.length === 0) return
     setIsUploading(true)
-    const results = await Promise.allSettled(
-      files.map((file) => uploadMutation.mutateAsync({ userId: activeUserId, file })),
-    )
+    const results = await Promise.allSettled(files.map((file) => uploadMutation.mutateAsync(file)))
     const newlyUploadedIds: string[] = []
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
@@ -181,11 +175,10 @@ export function ResumesPage() {
   // — it is not proof the new resume parsed successfully, so `isReplacing`
   // stays true until that's confirmed one way or the other.
   async function performReplace(oldResume: ResumeResponse, file: File) {
-    if (!activeUserId) return
     setIsReplacing(true)
     let uploaded: ResumeResponse
     try {
-      uploaded = await uploadMutation.mutateAsync({ userId: activeUserId, file })
+      uploaded = await uploadMutation.mutateAsync(file)
     } catch (error) {
       const apiError = toApiError(error)
       toast.error(
@@ -211,11 +204,11 @@ export function ResumesPage() {
   }
 
   function confirmDelete() {
-    if (!deleteTarget || !activeUserId) return
+    if (!deleteTarget) return
     const target = deleteTarget
     setDeleteTarget(null)
     deleteMutation.mutate(
-      { resumeId: target.id, userId: activeUserId },
+      { resumeId: target.id },
       {
         onSuccess: () => toast.success(`Deleted "${target.file_name}".`),
         onError: (error) => toast.error(toApiError(error).message),

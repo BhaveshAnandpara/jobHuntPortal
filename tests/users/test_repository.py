@@ -48,7 +48,7 @@ async def test_user_repository_add_and_get_roundtrip(session: AsyncSession) -> N
     repo = UserRepository(session)
     user = _make_user()
 
-    added = await repo.add(user)
+    added = await repo.add(user, "hashed-password")
     fetched = await repo.get(user.id)
 
     assert added.id == user.id
@@ -71,13 +71,29 @@ async def test_user_repository_get_unknown_id_returns_none(session: AsyncSession
 async def test_user_repository_get_by_email(session: AsyncSession) -> None:
     repo = UserRepository(session)
     user = _make_user(email="lookup@example.com")
-    await repo.add(user)
+    await repo.add(user, "hashed-password")
 
     found = await repo.get_by_email("lookup@example.com")
     missing = await repo.get_by_email("nobody@example.com")
 
     assert found is not None
     assert found.id == user.id
+    assert missing is None
+
+
+@pytest.mark.asyncio
+async def test_user_repository_get_by_email_with_hash(session: AsyncSession) -> None:
+    repo = UserRepository(session)
+    user = _make_user(email="withhash@example.com")
+    await repo.add(user, "the-stored-hash")
+
+    found = await repo.get_by_email_with_hash("withhash@example.com")
+    missing = await repo.get_by_email_with_hash("nobody@example.com")
+
+    assert found is not None
+    found_user, found_hash = found
+    assert found_user.id == user.id
+    assert found_hash == "the-stored-hash"
     assert missing is None
 
 
@@ -96,7 +112,7 @@ async def test_preferences_repository_get_returns_none_when_absent(
 async def test_preferences_repository_upsert_creates_row(session: AsyncSession) -> None:
     users_repo = UserRepository(session)
     prefs_repo = UserPreferencesRepository(session)
-    user = await users_repo.add(_make_user())
+    user = await users_repo.add(_make_user(), "hashed-password")
 
     prefs = UserPreferences(
         id=UserPreferencesId(uuid4()),
@@ -124,7 +140,7 @@ async def test_preferences_repository_upsert_replaces_existing_row(
     """
     users_repo = UserRepository(session)
     prefs_repo = UserPreferencesRepository(session)
-    user = await users_repo.add(_make_user())
+    user = await users_repo.add(_make_user(), "hashed-password")
 
     first = await prefs_repo.upsert(
         UserPreferences(

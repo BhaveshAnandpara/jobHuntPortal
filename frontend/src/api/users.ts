@@ -8,24 +8,25 @@ import { apiClient } from './client'
 import { queryKeys } from './queryKeys'
 import type {
   CreateUserRequest,
+  LoginResponse,
   UpdateUserPreferencesRequest,
   UserPreferencesResponse,
-  UserResponse,
 } from './types'
 
-export function createUser(body: CreateUserRequest): Promise<UserResponse> {
-  return apiClient.post<UserResponse>('/users', body)
+/** Registration — also mints a token (auto-login on account creation), so
+ * this returns `LoginResponse`, not a bare `UserResponse`. */
+export function createUser(body: CreateUserRequest): Promise<LoginResponse> {
+  return apiClient.post<LoginResponse>('/users', body)
 }
 
-export function getPreferences(userId: string): Promise<UserPreferencesResponse> {
-  return apiClient.get<UserPreferencesResponse>(`/users/${userId}/preferences`)
+export function getPreferences(): Promise<UserPreferencesResponse> {
+  return apiClient.get<UserPreferencesResponse>('/users/me/preferences')
 }
 
 export function updatePreferences(
-  userId: string,
   body: UpdateUserPreferencesRequest,
 ): Promise<UserPreferencesResponse> {
-  return apiClient.put<UserPreferencesResponse>(`/users/${userId}/preferences`, body)
+  return apiClient.put<UserPreferencesResponse>('/users/me/preferences', body)
 }
 
 /**
@@ -35,23 +36,21 @@ export function updatePreferences(
  * docs/frontend/async-workflows.md's table.
  */
 export function usePreferences(
-  userId: string,
   options?: Pick<UseQueryOptions<UserPreferencesResponse, Error>, 'enabled'>,
 ) {
   return useQuery({
-    queryKey: queryKeys.preferences(userId),
-    queryFn: () => getPreferences(userId),
-    enabled: Boolean(userId) && (options?.enabled ?? true),
+    queryKey: queryKeys.preferences(),
+    queryFn: () => getPreferences(),
+    enabled: options?.enabled ?? true,
   })
 }
 
 /**
- * Deliberately has no `onSuccess` side effect: persisting the new `id` to
- * `localStorage` and seeding `IdentityContext` (api-mapping.md's "State
- * affected" column for this action) is UI/identity composition owned by
- * `frontend-shell-agent`'s `hooks/identity.ts` — this hook only performs
- * the HTTP call and normalizes its result/error, never reaches into
- * another agent's module.
+ * Deliberately has no `onSuccess` side effect: persisting the new token and
+ * seeding `IdentityContext` (api-mapping.md's "State affected" column for
+ * this action) is UI/identity composition owned by `frontend-shell-agent`'s
+ * `hooks/identity.ts` — this hook only performs the HTTP call and
+ * normalizes its result/error, never reaches into another agent's module.
  */
 export function useCreateUser() {
   return useMutation({
@@ -62,15 +61,9 @@ export function useCreateUser() {
 export function useUpdatePreferences() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({
-      userId,
-      body,
-    }: {
-      userId: string
-      body: UpdateUserPreferencesRequest
-    }) => updatePreferences(userId, body),
-    onSuccess: (_data, variables) => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.preferences(variables.userId) })
+    mutationFn: (body: UpdateUserPreferencesRequest) => updatePreferences(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.preferences() })
     },
   })
 }

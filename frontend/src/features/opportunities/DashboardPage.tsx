@@ -4,7 +4,7 @@
  * sections). The "needs attention" list reading both applications and
  * outreach is cross-feature glue owned by frontend-integration-ui-agent —
  * see docs/frontend/agent-ownership.md's integration-ui-agent entry; this
- * page reads `useOutreachList(userId, 'PENDING_APPROVAL')` directly per its
+ * page reads `useOutreachList('PENDING_APPROVAL')` directly per its
  * own agent-ownership.md entry ("reading outreach data for a summary
  * display is fine; you're only forbidden from implementing outreach
  * *actions*"), which is enough for a simple attention count/link without
@@ -20,7 +20,6 @@
 import { Link } from 'react-router-dom'
 import { Briefcase, Send } from 'lucide-react'
 import { Card, EmptyState, ErrorState, PageHeader, Skeleton, StatusBadge } from '../../components'
-import { useCurrentUserId } from '../../hooks/identity'
 import { useApplications } from '../../api/tracking'
 import { useOutreachList } from '../../api/outreach'
 import { pollAlways } from '../../hooks/usePolling'
@@ -32,12 +31,10 @@ import { matchesStatusTab } from './pipeline'
 const RECENT_COUNT = 5
 
 export function DashboardPage() {
-  const { userId } = useCurrentUserId()
-
-  const applications = useApplications(userId ?? '', undefined, {
+  const applications = useApplications(undefined, {
     refetchInterval: pollAlways(10000),
   })
-  const pendingOutreach = useOutreachList(userId ?? '', 'PENDING_APPROVAL', {
+  const pendingOutreach = useOutreachList('PENDING_APPROVAL', {
     refetchInterval: pollAlways(10000),
   })
 

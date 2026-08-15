@@ -115,11 +115,12 @@ test.describe('accessibility', () => {
     await expect(page).toHaveURL('/opportunities')
   })
 
-  test('form fields have accessible labels on Welcome, Settings, and Resumes', async ({ page }) => {
-    // Welcome — unauthenticated, checked first.
-    await page.goto('/welcome')
+  test('form fields have accessible labels on Register, Settings, and Resumes', async ({ page }) => {
+    // Register — unauthenticated, checked first.
+    await page.goto('/register')
     await expect(page.getByLabel('Email')).toBeVisible()
     await expect(page.getByLabel('Display name')).toBeVisible()
+    await expect(page.getByLabel('Password')).toBeVisible()
 
     await createIdentity(page, { emailPrefix: 'a11y-labels' })
 

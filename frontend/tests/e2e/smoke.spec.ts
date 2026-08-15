@@ -6,7 +6,7 @@ import { test, expect } from '@playwright/test'
  * docs/frontend/testing-strategy.md) are written by
  * frontend-integration-ui-agent once the features they exercise exist.
  */
-test('the app shell loads and redirects to /welcome with no identity', async ({ page }) => {
+test('the app shell loads and redirects to /login with no token', async ({ page }) => {
   await page.goto('/')
-  await expect(page.getByText('Welcome')).toBeVisible()
+  await expect(page.getByText('Log in')).toBeVisible()
 })

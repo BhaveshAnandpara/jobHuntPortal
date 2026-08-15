@@ -25,13 +25,12 @@ import { getStatusPresentation } from '../../utils/status'
 
 type StatusActionMenuProps = {
   applicationId: string
-  userId: string
   currentStatus: ApplicationStatus
   /** Called after a failed transition so the caller can refetch current state. */
   onSettled: () => void
 }
 
-export function StatusActionMenu({ applicationId, userId, currentStatus, onSettled }: StatusActionMenuProps) {
+export function StatusActionMenu({ applicationId, currentStatus, onSettled }: StatusActionMenuProps) {
   const options = manualTransitionsFrom(currentStatus)
   const [selected, setSelected] = useState<string | undefined>(options[0])
   const updateStatus = useUpdateApplicationStatus()
@@ -50,7 +49,6 @@ export function StatusActionMenu({ applicationId, userId, currentStatus, onSettl
     updateStatus.mutate(
       {
         applicationId,
-        userId,
         body: { new_status: selected as ApplicationStatus, applied_date: null, notes: null },
       },
       {

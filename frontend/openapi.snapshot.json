@@ -28,7 +28,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserResponse"
+                  "$ref": "#/components/schemas/LoginResponse"
                 }
               }
             }
@@ -46,25 +46,13 @@
         }
       }
     },
-    "/users/{user_id}/preferences": {
+    "/users/me/preferences": {
       "get": {
         "tags": [
           "users"
         ],
         "summary": "Get Preferences",
-        "operationId": "get_preferences_users__user_id__preferences_get",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "User Id"
-            }
-          }
-        ],
+        "operationId": "get_preferences_users_me_preferences_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -75,46 +63,29 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
           }
-        }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       },
       "put": {
         "tags": [
           "users"
         ],
         "summary": "Replace Preferences",
-        "operationId": "replace_preferences_users__user_id__preferences_put",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "User Id"
-            }
-          }
-        ],
+        "operationId": "replace_preferences_users_me_preferences_put",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/UpdateUserPreferencesRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -137,10 +108,84 @@
               }
             }
           }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Login",
+        "operationId": "login_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
         }
       }
     },
     "/resumes": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "List Resumes",
+        "operationId": "list_resumes_resumes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ResumeResponse"
+                  },
+                  "type": "array",
+                  "title": "Response List Resumes Resumes Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
       "post": {
         "tags": [
           "profiles"
@@ -148,14 +193,14 @@
         "summary": "Upload Resume",
         "operationId": "upload_resume_resumes_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CreateResumeRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "202": {
@@ -178,52 +223,12 @@
               }
             }
           }
-        }
-      },
-      "get": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "List Resumes",
-        "operationId": "list_resumes_resumes_get",
-        "parameters": [
+        },
+        "security": [
           {
-            "name": "user_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "User Id"
-            }
+            "HTTPBearer": []
           }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ResumeResponse"
-                  },
-                  "title": "Response List Resumes Resumes Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/resumes/{resume_id}": {
@@ -269,44 +274,27 @@
         ],
         "summary": "List Profiles",
         "operationId": "list_profiles_profiles_get",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "User Id"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/ResumeProfile"
                   },
+                  "type": "array",
                   "title": "Response List Profiles Profiles Get"
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
           }
-        }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/profiles/{profile_id}": {
@@ -358,7 +346,7 @@
           "job-ingestion"
         ],
         "summary": "Ingest Job Url Route",
-        "description": "Submit a job posting URL for extraction.\n\nNote (flagged contract gap \u2014 see this agent's final report):\napi-contracts.md lists `user_id exists` as a validation rule producing\n404 `NOT_FOUND`, but dependency-graph.md documents zero runtime API\ncalls from Job Ingestion Service to User Service, so this handler has\nno documented way to verify `user_id` exists and does not attempt to.",
+        "description": "Submit a job posting URL for extraction.\n\nNote (flagged contract gap \u2014 see this agent's final report):\napi-contracts.md lists `user_id exists` as a validation rule producing\n404 `NOT_FOUND`, but dependency-graph.md documents zero runtime API\ncalls from Job Ingestion Service to User Service, so this handler has\nno documented way to verify `user_id` exists and does not attempt to.\n`user_id` is now token-derived rather than client-supplied (see\n`infrastructure.auth`), which closes the \"client can claim any\nuser_id\" gap but not this one \u2014 a valid token's user_id still isn't\nchecked for existence in the `users` table.",
         "operationId": "ingest_job_url_route_jobs_ingest_url_post",
         "requestBody": {
           "content": {
@@ -391,7 +379,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/jobs/{job_id}": {
@@ -439,6 +432,34 @@
       }
     },
     "/job-sources": {
+      "get": {
+        "tags": [
+          "job-discovery"
+        ],
+        "summary": "List Job Sources",
+        "operationId": "list_job_sources_job_sources_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/JobSourceResponse"
+                  },
+                  "type": "array",
+                  "title": "Response List Job Sources Job Sources Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
       "post": {
         "tags": [
           "job-discovery"
@@ -446,14 +467,14 @@
         "summary": "Create Job Source",
         "operationId": "create_job_source_job_sources_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CreateJobSourceRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "201": {
@@ -476,52 +497,12 @@
               }
             }
           }
-        }
-      },
-      "get": {
-        "tags": [
-          "job-discovery"
-        ],
-        "summary": "List Job Sources",
-        "operationId": "list_job_sources_job_sources_get",
-        "parameters": [
+        },
+        "security": [
           {
-            "name": "user_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "User Id"
-            }
+            "HTTPBearer": []
           }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/JobSourceResponse"
-                  },
-                  "title": "Response List Job Sources Job Sources Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/jobs/{job_id}/matches": {
@@ -621,8 +602,13 @@
           "contacts"
         ],
         "summary": "Trigger Contact Search",
-        "description": "Thin producer only \u2014 publishes `ContactsRequestedEvent` onto the\nsame `contacts.requested` command topic Job Matching Service uses\nautomatically (kafka-topics.md's design-decision note grants this\ncomponent producer rights here for exactly this manual re-trigger,\n\"not a self-call\"). The result arrives later via `contacts.found`,\nhandled by this component's own `contacts.requested` consumer just\nlike the automatic path \u2014 see gap 2 in this module's docstring for why\nthe request body carries `user_id`/`company`/`title`.",
+        "description": "Thin producer only \u2014 publishes `ContactsRequestedEvent` onto the\nsame `contacts.requested` command topic Job Matching Service uses\nautomatically (kafka-topics.md's design-decision note grants this\ncomponent producer rights here for exactly this manual re-trigger,\n\"not a self-call\"). The result arrives later via `contacts.found`,\nhandled by this component's own `contacts.requested` consumer just\nlike the automatic path \u2014 see gap 2 in this module's docstring for why\nthe request body carries `company`/`title` (`user_id` is now\ntoken-derived rather than a third additive body field).",
         "operationId": "trigger_contact_search_jobs__job_id__contacts_search_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "job_id",
@@ -676,17 +662,12 @@
         ],
         "summary": "List Outreach",
         "operationId": "list_outreach_outreach_get",
-        "parameters": [
+        "security": [
           {
-            "name": "user_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "User Id"
-            }
-          },
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
           {
             "name": "status",
             "in": "query",
@@ -931,17 +912,12 @@
         ],
         "summary": "List Applications",
         "operationId": "list_applications_applications_get",
-        "parameters": [
+        "security": [
           {
-            "name": "user_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "User Id"
-            }
-          },
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
           {
             "name": "status",
             "in": "query",
@@ -1462,11 +1438,6 @@
       },
       "CreateJobSourceRequest": {
         "properties": {
-          "user_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "User Id"
-          },
           "name": {
             "type": "string",
             "title": "Name"
@@ -1493,7 +1464,6 @@
         },
         "type": "object",
         "required": [
-          "user_id",
           "name",
           "type",
           "enabled"
@@ -1502,11 +1472,6 @@
       },
       "CreateResumeRequest": {
         "properties": {
-          "user_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "User Id"
-          },
           "file_name": {
             "type": "string",
             "title": "File Name"
@@ -1518,7 +1483,6 @@
         },
         "type": "object",
         "required": [
-          "user_id",
           "file_name",
           "file_content"
         ],
@@ -1533,6 +1497,10 @@
           "display_name": {
             "type": "string",
             "title": "Display Name"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
           },
           "timezone": {
             "anyOf": [
@@ -1549,7 +1517,8 @@
         "type": "object",
         "required": [
           "email",
-          "display_name"
+          "display_name",
+          "password"
         ],
         "title": "CreateUserRequest"
       },
@@ -1644,11 +1613,6 @@
       },
       "IngestJobUrlRequest": {
         "properties": {
-          "user_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "User Id"
-          },
           "url": {
             "type": "string",
             "title": "Url"
@@ -1656,7 +1620,6 @@
         },
         "type": "object",
         "required": [
-          "user_id",
           "url"
         ],
         "title": "IngestJobUrlRequest"
@@ -1892,6 +1855,46 @@
         ],
         "title": "JobSourceType",
         "description": "Owner: Job Discovery Service. Extensible \u2014 adding a source is additive."
+      },
+      "LoginRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest"
+      },
+      "LoginResponse": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token"
+          },
+          "token_type": {
+            "type": "string",
+            "title": "Token Type",
+            "default": "bearer"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token",
+          "user"
+        ],
+        "title": "LoginResponse"
       },
       "MatchRecommendation": {
         "type": "string",
@@ -2235,11 +2238,6 @@
       },
       "TriggerContactSearchRequest": {
         "properties": {
-          "user_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "User Id"
-          },
           "company": {
             "type": "string",
             "title": "Company"
@@ -2262,7 +2260,6 @@
         },
         "type": "object",
         "required": [
-          "user_id",
           "company",
           "title"
         ],
@@ -2537,6 +2534,12 @@
           "type"
         ],
         "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
       }
     }
   }

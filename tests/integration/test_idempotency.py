@@ -87,20 +87,20 @@ async def test_duplicate_job_url_ingestion_dedups_through_full_chain(
 ) -> None:
     user = harness.create_user()
     harness.set_profiles_llm([llm_response(_PROFILE_FIELDS)])
-    harness.upload_resume(user["id"], "resume.txt", _RESUME_TEXT)
+    harness.upload_resume(user, "resume.txt", _RESUME_TEXT)
 
     harness.set_job_ingestion_fakes(
         pages={JOB_URL: _JOB_PAGE_TEXT}, extractor_by_content=_job_extractor_fixture()
     )
 
-    first = harness.ingest_job(user["id"], JOB_URL)
-    second = harness.ingest_job(user["id"], JOB_URL)
+    first = harness.ingest_job(user, JOB_URL)
+    second = harness.ingest_job(user, JOB_URL)
     assert first["id"] == second["id"]
 
     discovered = log_envelopes(harness.broker, Topic.JOBS_DISCOVERED)
     assert len(discovered) == 1
 
-    harness.sync_matching_profiles(user["id"])
+    harness.sync_matching_profiles(user)
     harness.set_matching_preferences(FakeUserPreferencesClient({}))
     matching_llm = MatchingFakeLLMClient(
         default=ProfileScoringOutput(
@@ -123,7 +123,7 @@ async def test_duplicate_job_url_ingestion_dedups_through_full_chain(
     assert len(matched) == 1
 
     applications = harness.client.get(
-        "/applications", params={"user_id": user["id"]}
+        "/applications", headers=harness.auth_headers(user)
     ).json()
     assert len(applications) == 1
 
@@ -134,13 +134,13 @@ async def test_redelivered_jobs_discovered_does_not_rescore_or_duplicate_match(
 ) -> None:
     user = harness.create_user()
     harness.set_profiles_llm([llm_response(_PROFILE_FIELDS)])
-    harness.upload_resume(user["id"], "resume.txt", _RESUME_TEXT)
+    harness.upload_resume(user, "resume.txt", _RESUME_TEXT)
     harness.set_job_ingestion_fakes(
         pages={JOB_URL: _JOB_PAGE_TEXT}, extractor_by_content=_job_extractor_fixture()
     )
-    job = harness.ingest_job(user["id"], JOB_URL)
+    job = harness.ingest_job(user, JOB_URL)
 
-    harness.sync_matching_profiles(user["id"])
+    harness.sync_matching_profiles(user)
     harness.set_matching_preferences(FakeUserPreferencesClient({}))
     matching_llm = MatchingFakeLLMClient(
         default=ProfileScoringOutput(
@@ -182,13 +182,13 @@ async def test_redelivered_contacts_requested_does_not_duplicate_contacts(
 ) -> None:
     user = harness.create_user()
     harness.set_profiles_llm([llm_response(_PROFILE_FIELDS)])
-    harness.upload_resume(user["id"], "resume.txt", _RESUME_TEXT)
+    harness.upload_resume(user, "resume.txt", _RESUME_TEXT)
     harness.set_job_ingestion_fakes(
         pages={JOB_URL: _JOB_PAGE_TEXT}, extractor_by_content=_job_extractor_fixture()
     )
-    job = harness.ingest_job(user["id"], JOB_URL)
+    job = harness.ingest_job(user, JOB_URL)
 
-    harness.sync_matching_profiles(user["id"])
+    harness.sync_matching_profiles(user)
     harness.set_matching_preferences(FakeUserPreferencesClient({}))
     harness.set_matching_llm(
         MatchingFakeLLMClient(
@@ -262,14 +262,14 @@ async def test_redelivered_outreach_approved_sends_only_once_via_real_event(
 ) -> None:
     user = harness.create_user()
     harness.set_profiles_llm([llm_response(_PROFILE_FIELDS)])
-    harness.upload_resume(user["id"], "resume.txt", _RESUME_TEXT)
+    harness.upload_resume(user, "resume.txt", _RESUME_TEXT)
     harness.set_job_ingestion_fakes(
         pages={JOB_URL: _JOB_PAGE_TEXT}, extractor_by_content=_job_extractor_fixture()
     )
-    job = harness.ingest_job(user["id"], JOB_URL)
+    job = harness.ingest_job(user, JOB_URL)
     job_id = job["id"]
 
-    harness.sync_matching_profiles(user["id"])
+    harness.sync_matching_profiles(user)
     harness.set_matching_preferences(FakeUserPreferencesClient({}))
     harness.set_matching_llm(
         MatchingFakeLLMClient(

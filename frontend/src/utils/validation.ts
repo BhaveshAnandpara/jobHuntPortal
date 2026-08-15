@@ -26,3 +26,9 @@ export const httpUrl = z
   })
 
 export const email = z.string().trim().email('Enter a valid email address.')
+
+/** Matches the backend's minimum (`UserService.create_user`/`login`,
+ * `src/users/service.py`) — kept in sync by hand, same convention as
+ * every other client-side rule here (a UX nicety, backend stays the real
+ * authority). */
+export const password = z.string().min(8, 'Password must be at least 8 characters.')

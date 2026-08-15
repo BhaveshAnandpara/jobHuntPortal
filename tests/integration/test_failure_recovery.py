@@ -147,13 +147,13 @@ async def test_a_resume_parsing_llm_failure_marks_parse_failed(
             )
         ]
     )
-    harness.upload_resume(user["id"], "resume.txt", _RESUME_TEXT)
+    harness.upload_resume(user, "resume.txt", _RESUME_TEXT)
 
-    resumes = harness.client.get("/resumes", params={"user_id": user["id"]}).json()
+    resumes = harness.client.get("/resumes", headers=harness.auth_headers(user)).json()
     assert len(resumes) == 1
     assert resumes[0]["status"] == "PARSE_FAILED"
 
-    profiles = harness.list_profiles(user["id"])
+    profiles = harness.list_profiles(user)
     assert profiles == []
 
 
@@ -170,7 +170,7 @@ async def test_b_job_ingestion_fetch_failure_persists_nothing(
     harness.set_job_ingestion_fakes(errors={JOB_URL: RuntimeError("network down")})
 
     response = harness.client.post(
-        "/jobs/ingest-url", json={"user_id": user["id"], "url": JOB_URL}
+        "/jobs/ingest-url", json={"url": JOB_URL}, headers=harness.auth_headers(user)
     )
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "JOB_FETCH_FAILED"
@@ -188,13 +188,13 @@ async def test_c_total_scoring_failure_ignores_but_still_publishes_jobs_matched(
 ) -> None:
     user = harness.create_user()
     harness.set_profiles_llm([llm_response(_PROFILE_FIELDS)])
-    harness.upload_resume(user["id"], "resume.txt", _RESUME_TEXT)
+    harness.upload_resume(user, "resume.txt", _RESUME_TEXT)
     harness.set_job_ingestion_fakes(
         pages={JOB_URL: _JOB_PAGE_TEXT}, extractor_by_content=_job_extractor_fixture()
     )
-    job = harness.ingest_job(user["id"], JOB_URL)
+    job = harness.ingest_job(user, JOB_URL)
 
-    harness.sync_matching_profiles(user["id"])
+    harness.sync_matching_profiles(user)
     harness.set_matching_preferences(FakeUserPreferencesClient({}))
     harness.set_matching_llm(
         MatchingFakeLLMClient(
@@ -235,9 +235,9 @@ async def test_d_no_active_profiles_marks_job_failed_and_publishes_nothing(
     harness.set_job_ingestion_fakes(
         pages={JOB_URL: _JOB_PAGE_TEXT}, extractor_by_content=_job_extractor_fixture()
     )
-    job = harness.ingest_job(user["id"], JOB_URL)
+    job = harness.ingest_job(user, JOB_URL)
 
-    harness.sync_matching_profiles(user["id"])  # empty profile list, real API round-trip
+    harness.sync_matching_profiles(user)  # empty profile list, real API round-trip
     harness.set_matching_preferences(FakeUserPreferencesClient({}))
     harness.set_matching_llm(MatchingFakeLLMClient(default=_good_score()))
 
@@ -258,15 +258,15 @@ async def test_d_no_active_profiles_marks_job_failed_and_publishes_nothing(
 # ---------------------------------------------------------------------------
 
 
-async def _drive_to_contacts_requested(harness: IntegrationHarness) -> str:
+async def _drive_to_contacts_requested(harness: IntegrationHarness) -> tuple[str, dict]:
     user = harness.create_user()
     harness.set_profiles_llm([llm_response(_PROFILE_FIELDS)])
-    harness.upload_resume(user["id"], "resume.txt", _RESUME_TEXT)
+    harness.upload_resume(user, "resume.txt", _RESUME_TEXT)
     harness.set_job_ingestion_fakes(
         pages={JOB_URL: _JOB_PAGE_TEXT}, extractor_by_content=_job_extractor_fixture()
     )
-    job = harness.ingest_job(user["id"], JOB_URL)
-    harness.sync_matching_profiles(user["id"])
+    job = harness.ingest_job(user, JOB_URL)
+    harness.sync_matching_profiles(user)
     harness.set_matching_preferences(FakeUserPreferencesClient({}))
     harness.set_matching_llm(MatchingFakeLLMClient(default=_good_score()))
 
@@ -276,14 +276,14 @@ async def _drive_to_contacts_requested(harness: IntegrationHarness) -> str:
     await dispatch(Topic.JOBS_MATCHED, matched)
     shortlisted = log_envelopes(harness.broker, Topic.JOBS_SHORTLISTED)[0]
     await dispatch(Topic.JOBS_SHORTLISTED, shortlisted)
-    return job["id"]
+    return job["id"], user
 
 
 @pytest.mark.asyncio
 async def test_e_people_search_failure_still_publishes_empty_contacts_found(
     harness: IntegrationHarness,
 ) -> None:
-    job_id = await _drive_to_contacts_requested(harness)
+    job_id, _user = await _drive_to_contacts_requested(harness)
 
     import workflows.langgraph.contact_discovery.nodes as contact_nodes
     from tests.contacts.conftest import FakePeopleSearchClient
@@ -366,7 +366,7 @@ async def test_f_ranking_llm_failure_falls_back_to_rule_based_scoring(
 async def _drive_to_outreach_generated_for_failure_tests(
     harness: IntegrationHarness,
 ) -> tuple[str, str]:
-    job_id = await _drive_to_contacts_requested(harness)
+    job_id, _user = await _drive_to_contacts_requested(harness)
     hit = make_hit(
         full_name="Sam Lee",
         headline="Engineering Manager, Mechanical at Acme Robotics",
@@ -439,7 +439,7 @@ async def test_g_external_send_failure_marks_send_failed_no_outreach_sent(
 async def test_h_message_generation_failure_persists_and_publishes_nothing(
     harness: IntegrationHarness,
 ) -> None:
-    job_id = await _drive_to_contacts_requested(harness)
+    job_id, user = await _drive_to_contacts_requested(harness)
     hit = make_hit(
         full_name="Sam Lee",
         headline="Engineering Manager, Mechanical at Acme Robotics",
@@ -484,15 +484,8 @@ async def test_h_message_generation_failure_persists_and_publishes_nothing(
         await outreach_consumers._handle_contacts_found_async(contacts_found)
 
     assert log_envelopes(harness.broker, Topic.OUTREACH_GENERATED) == []
-    outreach_list = harness.client.get(
-        "/outreach", params={"user_id": (await _user_id_for_job(harness, job_id))}
-    ).json()
+    outreach_list = harness.client.get("/outreach", headers=harness.auth_headers(user)).json()
     assert outreach_list == []
-
-
-async def _user_id_for_job(harness: IntegrationHarness, job_id: str) -> str:
-    job_response = harness.client.get(f"/jobs/{job_id}").json()
-    return job_response["user_id"]
 
 
 # ---------------------------------------------------------------------------
@@ -530,14 +523,14 @@ async def test_i_publish_failure_after_persist_recovers_without_rescoring(
 ) -> None:
     user = harness.create_user()
     harness.set_profiles_llm([llm_response(_PROFILE_FIELDS)])
-    harness.upload_resume(user["id"], "resume.txt", _RESUME_TEXT)
+    harness.upload_resume(user, "resume.txt", _RESUME_TEXT)
     harness.set_job_ingestion_fakes(
         pages={JOB_URL: _JOB_PAGE_TEXT}, extractor_by_content=_job_extractor_fixture()
     )
-    job = harness.ingest_job(user["id"], JOB_URL)
+    job = harness.ingest_job(user, JOB_URL)
     job_id = job["id"]
 
-    harness.sync_matching_profiles(user["id"])
+    harness.sync_matching_profiles(user)
     harness.set_matching_preferences(FakeUserPreferencesClient({}))
     matching_llm = MatchingFakeLLMClient(default=_good_score())
     harness.set_matching_llm(matching_llm)

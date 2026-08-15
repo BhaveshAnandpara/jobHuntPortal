@@ -18,6 +18,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from infrastructure.auth.dependencies import get_current_user_id
 from profiles.api.dependencies import get_profile_service
 from profiles.api.routes import router
 from profiles.service import ProfileService
@@ -52,6 +53,7 @@ def app_and_deps(event_producer, resume_storage):
     resumes = FakeResumeRepository()
     profiles = FakeCandidateProfileRepository()
     llm_client, _ = make_llm_client([llm_response(_FIELDS)])
+    user_id = UserId(uuid4())
 
     service = ProfileService(
         resumes,
@@ -64,28 +66,28 @@ def app_and_deps(event_producer, resume_storage):
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_profile_service] = lambda: service
+    app.dependency_overrides[get_current_user_id] = lambda: user_id
 
-    return app, resumes, profiles
+    return app, resumes, profiles, user_id
 
 
 @pytest.fixture
 def client(app_and_deps):
-    app, _, _ = app_and_deps
+    app, _, _, _ = app_and_deps
     return TestClient(app)
 
 
 def test_post_resumes_returns_202_and_runs_parsing(app_and_deps, client: TestClient) -> None:
-    _, resumes, profiles = app_and_deps
-    user_id = str(uuid4())
+    _, resumes, profiles, user_id = app_and_deps
 
     response = client.post(
         "/resumes",
-        json={"user_id": user_id, "file_name": "resume.txt", "file_content": "aGVsbG8gd29ybGQ="},
+        json={"file_name": "resume.txt", "file_content": "aGVsbG8gd29ybGQ="},
     )
 
     assert response.status_code == 202
     body = response.json()
-    assert body["user_id"] == user_id
+    assert body["user_id"] == str(user_id)  # sourced from the (overridden) token
     assert body["file_name"] == "resume.txt"
     # TestClient runs the request synchronously, including scheduled
     # BackgroundTasks, so parsing has already completed by the time we get
@@ -99,7 +101,7 @@ def test_post_resumes_returns_202_and_runs_parsing(app_and_deps, client: TestCli
 def test_post_resumes_validation_error_returns_400(client: TestClient) -> None:
     response = client.post(
         "/resumes",
-        json={"user_id": str(uuid4()), "file_name": "resume.exe", "file_content": "aGVsbG8="},
+        json={"file_name": "resume.exe", "file_content": "aGVsbG8="},
     )
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
@@ -121,15 +123,14 @@ def test_post_resumes_recovers_original_bytes_end_to_end(
     would be the UTF-8 encoding of the base64 *string itself*
     (`b"SmFuZSBEb2U..."`), not the decoded original resume bytes.
     """
-    _, resumes, _ = app_and_deps
-    user_id = str(uuid4())
+    _, resumes, _, _user_id = app_and_deps
     original_text = "Jane Doe\nMechanical Design Engineer\nSolidWorks\nGD&T"
     original_bytes = original_text.encode("utf-8")
     encoded = base64.b64encode(original_bytes).decode("ascii")
 
     response = client.post(
         "/resumes",
-        json={"user_id": user_id, "file_name": "resume.txt", "file_content": encoded},
+        json={"file_name": "resume.txt", "file_content": encoded},
     )
 
     assert response.status_code == 202
@@ -149,12 +150,11 @@ def test_post_resumes_malformed_base64_returns_normalized_400(app_and_deps, clie
     422 array body — there is no global RequestValidationError handler to
     normalize that shape.
     """
-    _, resumes, profiles = app_and_deps
+    _, resumes, profiles, _user_id = app_and_deps
 
     response = client.post(
         "/resumes",
         json={
-            "user_id": str(uuid4()),
             "file_name": "resume.txt",
             "file_content": "not valid base64!!!",
         },
@@ -202,6 +202,7 @@ def test_post_resumes_llm_receives_decoded_resume_text(
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_profile_service] = lambda: service
+    app.dependency_overrides[get_current_user_id] = lambda: UserId(uuid4())
     client = TestClient(app)
 
     original_text = "Jane Doe\nMechanical Design Engineer\nSolidWorks\nGD&T"
@@ -209,7 +210,7 @@ def test_post_resumes_llm_receives_decoded_resume_text(
 
     response = client.post(
         "/resumes",
-        json={"user_id": str(uuid4()), "file_name": "resume.txt", "file_content": encoded},
+        json={"file_name": "resume.txt", "file_content": encoded},
     )
 
     assert response.status_code == 202
@@ -220,12 +221,11 @@ def test_post_resumes_llm_receives_decoded_resume_text(
 
 
 def test_get_resumes_lists_for_user(app_and_deps, client: TestClient) -> None:
-    _, resumes, _ = app_and_deps
-    user_id = UserId(uuid4())
+    _, resumes, _, user_id = app_and_deps
     resume = make_resume(user_id=user_id)
     resumes.by_id[resume.id] = resume
 
-    response = client.get("/resumes", params={"user_id": str(user_id)})
+    response = client.get("/resumes")
 
     assert response.status_code == 200
     body = response.json()
@@ -234,7 +234,7 @@ def test_get_resumes_lists_for_user(app_and_deps, client: TestClient) -> None:
 
 
 def test_delete_resume_returns_204(app_and_deps, client: TestClient) -> None:
-    _, resumes, _ = app_and_deps
+    _, resumes, _, _user_id = app_and_deps
     resume = make_resume()
     resumes.by_id[resume.id] = resume
 
@@ -251,8 +251,7 @@ def test_delete_resume_missing_returns_404(client: TestClient) -> None:
 
 
 def test_get_profiles_lists_for_user(app_and_deps, client: TestClient) -> None:
-    _, _, profiles = app_and_deps
-    user_id = UserId(uuid4())
+    _, _, profiles, user_id = app_and_deps
     profile = CandidateProfile(
         id=ProfileId(uuid4()),
         user_id=user_id,
@@ -263,7 +262,7 @@ def test_get_profiles_lists_for_user(app_and_deps, client: TestClient) -> None:
     )
     profiles.by_id[profile.id] = profile
 
-    response = client.get("/profiles", params={"user_id": str(user_id)})
+    response = client.get("/profiles")
 
     assert response.status_code == 200
     body = response.json()
@@ -273,7 +272,7 @@ def test_get_profiles_lists_for_user(app_and_deps, client: TestClient) -> None:
 
 
 def test_get_profile_by_id(app_and_deps, client: TestClient) -> None:
-    _, _, profiles = app_and_deps
+    _, _, profiles, _user_id = app_and_deps
     profile = CandidateProfile(
         id=ProfileId(uuid4()),
         user_id=uuid4(),

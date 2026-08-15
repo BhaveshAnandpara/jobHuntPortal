@@ -12,10 +12,16 @@ import { createUser, getPreferences, updatePreferences, useCreateUser, usePrefer
 import { createWrapper } from './test-utils'
 
 describe('users.ts functions', () => {
-  it('createUser posts and resolves the created UserResponse', async () => {
-    const result = await createUser({ email: 'a@example.com', display_name: 'Ada', timezone: null })
+  it('createUser posts and resolves a LoginResponse (token + user) — registration auto-logs-in', async () => {
+    const result = await createUser({
+      email: 'a@example.com',
+      display_name: 'Ada',
+      password: 'correct-password-123',
+      timezone: null,
+    })
 
-    expect(result.email).toBe('a@example.com')
+    expect(result.user.email).toBe('a@example.com')
+    expect(typeof result.access_token).toBe('string')
   })
 
   it('createUser surfaces a 400 VALIDATION_ERROR as ApiError', async () => {
@@ -25,7 +31,12 @@ describe('users.ts functions', () => {
       ),
     )
 
-    const error = await createUser({ email: '', display_name: '', timezone: null }).catch((e: unknown) => e)
+    const error = await createUser({
+      email: '',
+      display_name: '',
+      password: 'correct-password-123',
+      timezone: null,
+    }).catch((e: unknown) => e)
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).code).toBe('VALIDATION_ERROR')
@@ -33,19 +44,19 @@ describe('users.ts functions', () => {
 
   it('getPreferences surfaces a 404 when unset', async () => {
     server.use(
-      http.get(`${API_BASE_URL}/users/:userId/preferences`, () =>
+      http.get(`${API_BASE_URL}/users/me/preferences`, () =>
         HttpResponse.json({ detail: { code: 'NOT_FOUND', message: 'No preferences set' } }, { status: 404 }),
       ),
     )
 
-    const error = await getPreferences('user-1').catch((e: unknown) => e)
+    const error = await getPreferences().catch((e: unknown) => e)
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).status).toBe(404)
   })
 
   it('updatePreferences PUTs and resolves the updated UserPreferencesResponse', async () => {
-    const result = await updatePreferences('user-1', {
+    const result = await updatePreferences({
       target_roles: ['Backend Engineer'],
       target_locations: [],
       remote_preference: null,
@@ -58,9 +69,9 @@ describe('users.ts functions', () => {
   })
 
   it('propagates a network failure as ApiError', async () => {
-    server.use(http.get(`${API_BASE_URL}/users/:userId/preferences`, () => HttpResponse.error()))
+    server.use(http.get(`${API_BASE_URL}/users/me/preferences`, () => HttpResponse.error()))
 
-    const error = await getPreferences('user-1').catch((e: unknown) => e)
+    const error = await getPreferences().catch((e: unknown) => e)
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).code).toBe('NETWORK_ERROR')
@@ -68,28 +79,22 @@ describe('users.ts functions', () => {
 })
 
 describe('users.ts hooks', () => {
-  it('usePreferences resolves preferences for a user', async () => {
-    const { result } = renderHook(() => usePreferences('user-1'), { wrapper: createWrapper() })
+  it('usePreferences resolves preferences for the authenticated user', async () => {
+    const { result } = renderHook(() => usePreferences(), { wrapper: createWrapper() })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
     expect(result.current.data?.user_id).toBe('user-1')
   })
 
-  it('usePreferences does not fire when userId is empty', () => {
-    const { result } = renderHook(() => usePreferences(''), { wrapper: createWrapper() })
-
-    expect(result.current.fetchStatus).toBe('idle')
-  })
-
   it('usePreferences surfaces a 404 as ApiError on the query result', async () => {
     server.use(
-      http.get(`${API_BASE_URL}/users/:userId/preferences`, () =>
+      http.get(`${API_BASE_URL}/users/me/preferences`, () =>
         HttpResponse.json({ detail: { code: 'NOT_FOUND', message: 'No preferences set' } }, { status: 404 }),
       ),
     )
 
-    const { result } = renderHook(() => usePreferences('user-1'), { wrapper: createWrapper() })
+    const { result } = renderHook(() => usePreferences(), { wrapper: createWrapper() })
 
     await waitFor(() => expect(result.current.isError).toBe(true))
 
@@ -97,21 +102,21 @@ describe('users.ts hooks', () => {
     expect((result.current.error as ApiError).status).toBe(404)
   })
 
-  it('useCreateUser exposes the created user on success without touching localStorage itself', async () => {
+  it('useCreateUser exposes the created user/token on success without touching localStorage itself', async () => {
     const { result } = renderHook(() => useCreateUser(), { wrapper: createWrapper() })
 
-    result.current.mutate({ email: 'a@example.com', display_name: 'Ada', timezone: null })
+    result.current.mutate({ email: 'a@example.com', display_name: 'Ada', password: 'correct-password-123', timezone: null })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
-    expect(result.current.data?.email).toBe('a@example.com')
-    expect(localStorage.getItem('jobhunt.userId')).toBeNull()
+    expect(result.current.data?.user.email).toBe('a@example.com')
+    expect(localStorage.getItem('jobhunt.token')).toBeNull()
   })
 
-  it('useUpdatePreferences invalidates the preferences query for that userId on success, triggering a refetch', async () => {
+  it('useUpdatePreferences invalidates the preferences query on success, triggering a refetch', async () => {
     let getCallCount = 0
     server.use(
-      http.get(`${API_BASE_URL}/users/:userId/preferences`, () => {
+      http.get(`${API_BASE_URL}/users/me/preferences`, () => {
         getCallCount += 1
         return HttpResponse.json({
           id: 'pref-1',
@@ -126,21 +131,18 @@ describe('users.ts hooks', () => {
       }),
     )
     const wrapper = createWrapper()
-    const { result: prefsResult } = renderHook(() => usePreferences('user-1'), { wrapper })
+    const { result: prefsResult } = renderHook(() => usePreferences(), { wrapper })
     await waitFor(() => expect(prefsResult.current.isSuccess).toBe(true))
     expect(getCallCount).toBe(1)
 
     const { result: mutationResult } = renderHook(() => useUpdatePreferences(), { wrapper })
     mutationResult.current.mutate({
-      userId: 'user-1',
-      body: {
-        target_roles: ['Backend Engineer', 'Platform Engineer'],
-        target_locations: [],
-        remote_preference: null,
-        excluded_companies: [],
-        min_salary: null,
-        salary_currency: null,
-      },
+      target_roles: ['Backend Engineer', 'Platform Engineer'],
+      target_locations: [],
+      remote_preference: null,
+      excluded_companies: [],
+      min_salary: null,
+      salary_currency: null,
     })
 
     await waitFor(() => expect(mutationResult.current.isSuccess).toBe(true))

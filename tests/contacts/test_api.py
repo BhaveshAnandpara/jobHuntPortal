@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from contacts.api.dependencies import get_session
 from contacts.api.routes import router
 from contacts.events import get_event_producer
+from infrastructure.auth.dependencies import get_current_user_id
 from infrastructure.kafka.in_memory import InMemoryBroker, InMemoryProducerClient
 from infrastructure.kafka.producer import EventProducer
 from infrastructure.kafka.serialization import deserialize
@@ -43,7 +44,9 @@ def _contact(job_id: JobId, **overrides: object) -> Contact:
     return Contact(**fields)
 
 
-def _client(session_factory=None, broker: InMemoryBroker | None = None) -> TestClient:
+def _client(
+    session_factory=None, broker: InMemoryBroker | None = None, user_id: UserId | None = None
+) -> tuple[TestClient, UserId]:
     app = FastAPI()
     app.include_router(router)
 
@@ -54,12 +57,14 @@ def _client(session_factory=None, broker: InMemoryBroker | None = None) -> TestC
         async with session_factory() as session:
             yield session
 
+    resolved_user_id = user_id if user_id is not None else UserId(uuid4())
     app.dependency_overrides[get_session] = fake_session
     app.dependency_overrides[get_event_producer] = lambda: EventProducer(
         "contact-discovery-service",
         client=InMemoryProducerClient(broker or InMemoryBroker()),
     )
-    return TestClient(app)
+    app.dependency_overrides[get_current_user_id] = lambda: resolved_user_id
+    return TestClient(app), resolved_user_id
 
 
 @pytest.mark.asyncio
@@ -89,7 +94,7 @@ async def test_get_job_contacts_returns_persisted_contacts_with_relevance(
         )
         await session.commit()
 
-    client = _client(session_factory)
+    client, _user_id = _client(session_factory)
     response = client.get(f"/jobs/{job_id}/contacts")
 
     assert response.status_code == 200
@@ -105,7 +110,7 @@ async def test_get_job_contacts_returns_persisted_contacts_with_relevance(
 async def test_get_job_contacts_returns_empty_list_for_unknown_job(session_factory) -> None:
     """No 404 — see contacts/api/routes.py's documented gap: this service
     cannot distinguish "unknown job" from "no contacts found yet"."""
-    client = _client(session_factory)
+    client, _user_id = _client(session_factory)
 
     response = client.get(f"/jobs/{uuid4()}/contacts")
 
@@ -115,13 +120,12 @@ async def test_get_job_contacts_returns_empty_list_for_unknown_job(session_facto
 
 def test_trigger_contact_search_publishes_contacts_requested_event() -> None:
     broker = InMemoryBroker()
-    client = _client(broker=broker)
+    client, user_id = _client(broker=broker)
     job_id = uuid4()
 
     response = client.post(
         f"/jobs/{job_id}/contacts/search",
         json={
-            "user_id": str(uuid4()),
             "company": "Acme Robotics",
             "title": "Mechanical Design Engineer",
             "location": "Remote",
@@ -137,12 +141,13 @@ def test_trigger_contact_search_publishes_contacts_requested_event() -> None:
     assert len(messages) == 1
     published = deserialize(Topic.CONTACTS_REQUESTED, messages[0].value())
     assert str(published.payload.job_id) == str(job_id)
+    assert published.payload.user_id == user_id  # sourced from the (overridden) token
     assert published.payload.company == "Acme Robotics"
     assert published.payload.title == "Mechanical Design Engineer"
 
 
 def test_trigger_contact_search_rejects_missing_required_fields() -> None:
-    client = _client()
+    client, _user_id = _client()
 
     response = client.post(f"/jobs/{uuid4()}/contacts/search", json={})
 

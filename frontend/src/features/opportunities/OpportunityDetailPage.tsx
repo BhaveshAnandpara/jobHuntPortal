@@ -20,7 +20,7 @@
  * is a `resume_id`, but `useProfile(profileId)` is keyed by `profile_id` —
  * distinct fields on `ResumeProfile` (confirmed against
  * src/api/generated/schema.d.ts). There is no "get profile by resume id"
- * endpoint, so this page uses `useProfiles(userId)` and matches
+ * endpoint, so this page uses `useProfiles()` and matches
  * client-side by `resume_id` instead of calling `useProfile` directly, per
  * the documented judgment call in this agent's brief.
  *
@@ -36,7 +36,6 @@
 import { useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { ErrorState, PageHeader, Spinner, StatusBadge } from '../../components'
-import { useCurrentUserId } from '../../hooks/identity'
 import { useApplication, useApplicationHistory } from '../../api/tracking'
 import { useJob } from '../../api/jobs'
 import { useJobMatch } from '../../api/matching'
@@ -55,7 +54,6 @@ import { OutreachSummaryPanel } from './OutreachSummaryPanel'
 
 export function OpportunityDetailPage() {
   const { applicationId } = useParams<{ applicationId: string }>()
-  const { userId } = useCurrentUserId()
 
   const applicationQuery = useApplication(applicationId ?? '', {
     refetchInterval: pollUntil(3000, isApplicationSettled),
@@ -65,8 +63,8 @@ export function OpportunityDetailPage() {
   const historyQuery = useApplicationHistory(applicationId ?? '')
   const jobQuery = useJob(application?.job_id ?? '')
   const jobMatchQuery = useJobMatch(application?.job_id ?? '')
-  const profilesQuery = useProfiles(userId ?? '')
-  const outreachQuery = useOutreachList(userId ?? '')
+  const profilesQuery = useProfiles()
+  const outreachQuery = useOutreachList()
 
   const selectedProfile = useMemo(
     () => profilesQuery.data?.find((profile) => profile.resume_id === application?.selected_resume_id),
@@ -180,7 +178,6 @@ export function OpportunityDetailPage() {
 
         <StatusActionMenu
           applicationId={application.id}
-          userId={userId ?? ''}
           currentStatus={application.status}
           onSettled={() => applicationQuery.refetch()}
         />

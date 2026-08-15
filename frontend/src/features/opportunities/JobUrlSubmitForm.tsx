@@ -30,16 +30,14 @@ import { useIngestJobUrl } from '../../api/jobs'
 import { useProfiles } from '../../api/profiles'
 import { toApiError } from '../../api/client'
 import { httpUrl } from '../../utils/validation'
-import { useCurrentUserId } from '../../hooks/identity'
 
 const schema = z.object({ url: httpUrl })
 type FormValues = z.infer<typeof schema>
 
 export function JobUrlSubmitForm({ className = '' }: { className?: string }) {
-  const { userId } = useCurrentUserId()
   const navigate = useNavigate()
   const ingest = useIngestJobUrl()
-  const profiles = useProfiles(userId ?? '')
+  const profiles = useProfiles()
   const {
     register,
     handleSubmit,
@@ -47,11 +45,8 @@ export function JobUrlSubmitForm({ className = '' }: { className?: string }) {
   } = useForm<FormValues>({ resolver: zodResolver(schema) })
 
   const onSubmit = handleSubmit((values) => {
-    if (!userId) {
-      return
-    }
     ingest.mutate(
-      { user_id: userId, url: values.url },
+      { url: values.url },
       {
         onSuccess: (job) => {
           navigate('/opportunities', {

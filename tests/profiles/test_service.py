@@ -77,12 +77,11 @@ async def test_upload_resume_success(
 ) -> None:
     service = _service(resume_repository, profile_repository, event_producer, resume_storage)
     request = CreateResumeRequest(
-        user_id=UserId(uuid4()),
         file_name="resume.txt",
         file_content=base64.b64encode(b"hello world").decode("ascii"),
     )
 
-    resume = await service.upload_resume(request)
+    resume = await service.upload_resume(request, UserId(uuid4()))
 
     assert resume.status == ResumeStatus.PARSING
     assert resume.file_name == "resume.txt"
@@ -103,13 +102,12 @@ async def test_upload_resume_rejects_unsupported_extension(
 ) -> None:
     service = _service(resume_repository, profile_repository, event_producer, resume_storage)
     request = CreateResumeRequest(
-        user_id=UserId(uuid4()),
         file_name="resume.exe",
         file_content=base64.b64encode(b"hello").decode("ascii"),
     )
 
     with pytest.raises(ProfileError) as excinfo:
-        await service.upload_resume(request)
+        await service.upload_resume(request, UserId(uuid4()))
     assert excinfo.value.code == ErrorCode.VALIDATION_ERROR
     assert resume_repository.by_id == {}
 
@@ -123,13 +121,12 @@ async def test_upload_resume_rejects_oversized_file(
 ) -> None:
     service = _service(resume_repository, profile_repository, event_producer, resume_storage)
     request = CreateResumeRequest(
-        user_id=UserId(uuid4()),
         file_name="resume.txt",
         file_content=base64.b64encode(b"x" * (10 * 1024 * 1024 + 1)).decode("ascii"),
     )
 
     with pytest.raises(ProfileError) as excinfo:
-        await service.upload_resume(request)
+        await service.upload_resume(request, UserId(uuid4()))
     assert excinfo.value.code == ErrorCode.VALIDATION_ERROR
 
 
@@ -141,10 +138,10 @@ async def test_upload_resume_rejects_empty_file(
     resume_storage: LocalResumeStorage,
 ) -> None:
     service = _service(resume_repository, profile_repository, event_producer, resume_storage)
-    request = CreateResumeRequest(user_id=UserId(uuid4()), file_name="resume.txt", file_content="")
+    request = CreateResumeRequest(file_name="resume.txt", file_content="")
 
     with pytest.raises(ProfileError) as excinfo:
-        await service.upload_resume(request)
+        await service.upload_resume(request, UserId(uuid4()))
     assert excinfo.value.code == ErrorCode.VALIDATION_ERROR
 
 
@@ -160,12 +157,10 @@ async def test_upload_resume_rejects_malformed_base64(
     not silently mis-decoded or stored.
     """
     service = _service(resume_repository, profile_repository, event_producer, resume_storage)
-    request = CreateResumeRequest(
-        user_id=UserId(uuid4()), file_name="resume.txt", file_content="not valid base64!!!"
-    )
+    request = CreateResumeRequest(file_name="resume.txt", file_content="not valid base64!!!")
 
     with pytest.raises(ProfileError) as excinfo:
-        await service.upload_resume(request)
+        await service.upload_resume(request, UserId(uuid4()))
     assert excinfo.value.code == ErrorCode.VALIDATION_ERROR
     assert resume_repository.by_id == {}
 

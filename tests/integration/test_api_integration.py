@@ -15,20 +15,28 @@ from tests.integration.conftest import IntegrationHarness
 
 def test_user_service_endpoints(harness: IntegrationHarness) -> None:
     created = harness.client.post(
-        "/users", json={"email": f"{uuid4()}@example.com", "display_name": "Ada Lovelace"}
+        "/users",
+        json={
+            "email": f"{uuid4()}@example.com",
+            "display_name": "Ada Lovelace",
+            "password": "test-password-123",
+        },
     )
     assert created.status_code == 201
-    user = created.json()
+    body = created.json()
+    user = {**body["user"], "access_token": body["access_token"]}
+    headers = harness.auth_headers(user)
 
     # No UserPreferences row exists until PUT creates one (users/service.py's
     # get_preferences raises NOT_FOUND rather than assuming a default row —
     # api-contracts.md documents 404 as a valid GET status for this reason).
-    before_put = harness.client.get(f"/users/{user['id']}/preferences")
+    before_put = harness.client.get("/users/me/preferences", headers=headers)
     assert before_put.status_code == 404
     assert before_put.json()["detail"]["code"] == "NOT_FOUND"
 
     updated = harness.client.put(
-        f"/users/{user['id']}/preferences",
+        "/users/me/preferences",
+        headers=headers,
         json={
             "target_roles": ["Mechanical Design Engineer"],
             "target_locations": ["Remote"],
@@ -42,11 +50,12 @@ def test_user_service_endpoints(harness: IntegrationHarness) -> None:
     assert updated.json()["target_roles"] == ["Mechanical Design Engineer"]
     assert updated.json()["remote_preference"] == "REMOTE"
 
-    after_put = harness.client.get(f"/users/{user['id']}/preferences")
+    after_put = harness.client.get("/users/me/preferences", headers=headers)
     assert after_put.status_code == 200
     assert after_put.json()["user_id"] == user["id"]
 
-    missing = harness.client.get(f"/users/{uuid4()}/preferences")
+    other_user = harness.create_user()
+    missing = harness.client.get("/users/me/preferences", headers=harness.auth_headers(other_user))
     assert missing.status_code == 404
     assert missing.json()["detail"]["code"] == "NOT_FOUND"
 
@@ -54,7 +63,7 @@ def test_user_service_endpoints(harness: IntegrationHarness) -> None:
 def test_resume_profile_endpoints_error_shapes(harness: IntegrationHarness) -> None:
     user = harness.create_user()
 
-    resumes = harness.client.get("/resumes", params={"user_id": user["id"]})
+    resumes = harness.client.get("/resumes", headers=harness.auth_headers(user))
     assert resumes.status_code == 200
     assert resumes.json() == []
 
@@ -92,11 +101,11 @@ def test_contact_discovery_endpoints(harness: IntegrationHarness) -> None:
     triggered = harness.client.post(
         f"/jobs/{job_id}/contacts/search",
         json={
-            "user_id": user["id"],
             "company": "Acme Robotics",
             "title": "Senior Mechanical Design Engineer",
             "location": "Remote",
         },
+        headers=harness.auth_headers(user),
     )
     assert triggered.status_code == 202
     body = triggered.json()
@@ -109,13 +118,15 @@ def test_contact_discovery_endpoints(harness: IntegrationHarness) -> None:
     assert len(requested) == 1
     assert requested[0].payload.company == "Acme Robotics"
 
-    invalid = harness.client.post(f"/jobs/{job_id}/contacts/search", json={"user_id": user["id"]})
+    invalid = harness.client.post(
+        f"/jobs/{job_id}/contacts/search", json={}, headers=harness.auth_headers(user)
+    )
     assert invalid.status_code == 422  # missing required company/title
 
 
 def test_outreach_endpoints_error_shapes(harness: IntegrationHarness) -> None:
     user = harness.create_user()
-    listed = harness.client.get("/outreach", params={"user_id": user["id"]})
+    listed = harness.client.get("/outreach", headers=harness.auth_headers(user))
     assert listed.status_code == 200
     assert listed.json() == []
 
@@ -175,8 +186,10 @@ def test_tracking_manual_status_transition_rejects_invalid_edges(
 
     asyncio.run(_seed())
 
+    from infrastructure.auth import create_access_token
+
     applications = harness.client.get(
-        "/applications", params={"user_id": str(user_id)}
+        "/applications", headers={"Authorization": f"Bearer {create_access_token(user_id)}"}
     ).json()
     application_id = applications[0]["id"]
 

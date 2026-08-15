@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { server } from '../../../tests/mocks/server'
 import { API_BASE_URL } from '../../api/client'
 import { IdentityContext } from '../../hooks/identity'
+import { mintTestToken } from '../../../tests/support/jwt'
 import { OutreachReviewPage } from './OutreachReviewPage'
 
 function renderDeepLink(outreachId = 'outreach-1') {
@@ -19,7 +20,9 @@ function renderDeepLink(outreachId = 'outreach-1') {
   })
   return render(
     <QueryClientProvider client={queryClient}>
-      <IdentityContext.Provider value={{ userId: 'user-1', setUserId: vi.fn(), clearUserId: vi.fn() }}>
+      <IdentityContext.Provider
+        value={{ token: mintTestToken('user-1'), userId: 'user-1', setToken: vi.fn(), clearToken: vi.fn() }}
+      >
         <MemoryRouter initialEntries={[`/outreach/${outreachId}`]}>
           <Routes>
             <Route path="/outreach/:outreachId" element={<OutreachReviewPage />} />

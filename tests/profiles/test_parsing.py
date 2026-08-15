@@ -9,6 +9,8 @@ all flow through the identical, unbranched extraction path).
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from infrastructure.llm import LLMConfig
@@ -180,6 +182,23 @@ def test_extract_profile_fields_does_not_retry_non_retryable_transport_error() -
     )
     with pytest.raises(ResumeParsingError):
         extract_profile_fields("raw text", client=client)
+    assert len(provider.requests) == 1
+
+
+def test_extract_profile_fields_recovers_from_schema_name_wrapper() -> None:
+    """Reproduces the observed local-Ollama failure: the model wraps its
+    answer as `{"ExtractedResumeProfile": {...}}` instead of returning the
+    bare object, which used to raise SCHEMA_VALIDATION_FAILED ("title:
+    Field required") on the first attempt. structured.py's
+    `_unwrap_schema_wrapper` now recovers without needing a repair round."""
+    wrapped = json.dumps({"ExtractedResumeProfile": _HR_FIELDS})
+    client, provider = make_llm_client(
+        [llm_response_text(wrapped)],
+        config=LLMConfig(max_attempts=1, repair_attempts=0),
+    )
+    result = extract_profile_fields("raw text", client=client)
+    assert result.title == _HR_FIELDS["title"]
+    # recovered on the first attempt, no repair round needed
     assert len(provider.requests) == 1
 
 

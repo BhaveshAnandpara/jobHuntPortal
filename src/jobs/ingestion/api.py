@@ -19,6 +19,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from infrastructure.auth import CurrentUserIdDependency
 from infrastructure.kafka.producer import EventProducer
 from infrastructure.logging import format_context, get_logger
 from jobs.ingestion.dependencies import (
@@ -87,6 +88,7 @@ def _job_response(job: Job) -> JobResponse:
 )
 async def ingest_job_url_route(
     request: IngestJobUrlRequest,
+    user_id: CurrentUserIdDependency,
     repository: JobRepositoryDependency,
     page_fetcher: PageFetcherDependency,
     extractor: StructuredExtractorDependency,
@@ -99,14 +101,18 @@ async def ingest_job_url_route(
     404 `NOT_FOUND`, but dependency-graph.md documents zero runtime API
     calls from Job Ingestion Service to User Service, so this handler has
     no documented way to verify `user_id` exists and does not attempt to.
+    `user_id` is now token-derived rather than client-supplied (see
+    `infrastructure.auth`), which closes the "client can claim any
+    user_id" gap but not this one — a valid token's user_id still isn't
+    checked for existence in the `users` table.
     """
     logger.info(
         "Job ingestion requested | %s",
-        format_context(user_id=request.user_id, url=request.url),
+        format_context(user_id=user_id, url=request.url),
     )
     try:
         job = await ingest_job_url(
-            user_id=request.user_id,
+            user_id=user_id,
             url=request.url,
             repository=repository,
             page_fetcher=page_fetcher,
@@ -118,13 +124,13 @@ async def ingest_job_url_route(
     except JobIngestionError as error:
         logger.error(
             "Job ingestion failed | %s",
-            format_context(user_id=request.user_id, error_code=error.error_code.value, error=error.message),
+            format_context(user_id=user_id, error_code=error.error_code.value, error=error.message),
         )
         raise _http_error(error) from error
 
     logger.info(
         "Job created | %s",
-        format_context(job_id=job.id, user_id=request.user_id, status=job.processing_status.value),
+        format_context(job_id=job.id, user_id=user_id, status=job.processing_status.value),
     )
     return _job_response(job)
 

@@ -20,7 +20,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from shared.types.enums import ContactStatus, ContactType
-from shared.types.ids import ContactId, JobId, UserId
+from shared.types.ids import ContactId, JobId
 
 
 class ContactResponse(BaseModel):
@@ -38,7 +38,6 @@ class TriggerContactSearchRequest(BaseModel):
     """See this module's docstring — an additive gap-resolution type, not
     part of api-contracts.md's documented (path-param-only) input."""
 
-    user_id: UserId
     company: str
     title: str
     location: str | None = None

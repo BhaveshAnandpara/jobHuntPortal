@@ -42,6 +42,7 @@ from fastapi import APIRouter, status
 
 from contacts.api.dependencies import EventProducerDep, SessionDep
 from contacts.repository import list_contacts_with_relevance
+from infrastructure.auth import CurrentUserIdDependency
 from infrastructure.kafka.topics import Topic
 from shared.events.payloads import ContactSearchRequest
 from shared.types.api.contacts import (
@@ -82,6 +83,7 @@ async def get_job_contacts(job_id: UUID, session: SessionDep) -> list[ContactRes
 async def trigger_contact_search(
     job_id: UUID,
     request: TriggerContactSearchRequest,
+    user_id: CurrentUserIdDependency,
     producer: EventProducerDep,
 ) -> TriggerContactSearchResponse:
     """Thin producer only — publishes `ContactsRequestedEvent` onto the
@@ -91,12 +93,13 @@ async def trigger_contact_search(
     "not a self-call"). The result arrives later via `contacts.found`,
     handled by this component's own `contacts.requested` consumer just
     like the automatic path — see gap 2 in this module's docstring for why
-    the request body carries `user_id`/`company`/`title`.
+    the request body carries `company`/`title` (`user_id` is now
+    token-derived rather than a third additive body field).
     """
     requested_at = datetime.now(UTC)
     payload = ContactSearchRequest(
         job_id=JobId(job_id),
-        user_id=request.user_id,
+        user_id=user_id,
         company=request.company,
         title=request.title,
         location=request.location,

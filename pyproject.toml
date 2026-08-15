@@ -22,6 +22,8 @@ dependencies = [
     "ollama",
     "streamlit",
     "python-dotenv",
+    "pyjwt",
+    "bcrypt",
 ]
 
 [project.optional-dependencies]

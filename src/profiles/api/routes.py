@@ -15,13 +15,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
+from infrastructure.auth import CurrentUserIdDependency
 from profiles.api.dependencies import get_profile_service
 from profiles.service import ProfileError, ProfileService
 from shared.errors.codes import ErrorCode
 from shared.types.api.profiles import CreateResumeRequest, ResumeResponse
 from shared.types.domain.resume import Resume
 from shared.types.dto import ResumeProfile
-from shared.types.ids import ProfileId, ResumeId, UserId
+from shared.types.ids import ProfileId, ResumeId
 
 router = APIRouter(tags=["profiles"])
 
@@ -53,11 +54,12 @@ def _resume_response(resume: Resume) -> ResumeResponse:
 @router.post("/resumes", response_model=ResumeResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_resume(
     request: CreateResumeRequest,
+    user_id: CurrentUserIdDependency,
     background_tasks: BackgroundTasks,
     service: ProfileServiceDep,
 ) -> ResumeResponse:
     try:
-        resume = await service.upload_resume(request)
+        resume = await service.upload_resume(request, user_id)
     except ProfileError as error:
         raise _http_error(error) from error
 
@@ -73,10 +75,10 @@ async def upload_resume(
 
 @router.get("/resumes", response_model=list[ResumeResponse])
 async def list_resumes(
-    user_id: UUID,
+    user_id: CurrentUserIdDependency,
     service: ProfileServiceDep,
 ) -> list[ResumeResponse]:
-    resumes = await service.list_resumes(UserId(user_id))
+    resumes = await service.list_resumes(user_id)
     return [_resume_response(resume) for resume in resumes]
 
 
@@ -93,10 +95,10 @@ async def delete_resume(
 
 @router.get("/profiles", response_model=list[ResumeProfile])
 async def list_profiles(
-    user_id: UUID,
+    user_id: CurrentUserIdDependency,
     service: ProfileServiceDep,
 ) -> list[ResumeProfile]:
-    return await service.list_profiles(UserId(user_id))
+    return await service.list_profiles(user_id)
 
 
 @router.get("/profiles/{profile_id}", response_model=ResumeProfile)

@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { server } from '../../../tests/mocks/server'
 import { API_BASE_URL } from '../../api/client'
 import { IdentityContext } from '../../hooks/identity'
+import { mintTestToken } from '../../../tests/support/jwt'
 import { OutreachQueuePage } from './OutreachQueuePage'
 
 function renderQueue() {
@@ -19,7 +20,9 @@ function renderQueue() {
   })
   return render(
     <QueryClientProvider client={queryClient}>
-      <IdentityContext.Provider value={{ userId: 'user-1', setUserId: vi.fn(), clearUserId: vi.fn() }}>
+      <IdentityContext.Provider
+        value={{ token: mintTestToken('user-1'), userId: 'user-1', setToken: vi.fn(), clearToken: vi.fn() }}
+      >
         <OutreachQueuePage />
       </IdentityContext.Provider>
     </QueryClientProvider>,

@@ -30,20 +30,20 @@ export function useJob(jobId: string) {
 }
 
 /**
- * Invalidates `queryKeys.applications(userId)` on success per
- * api-mapping.md — note this alone will not immediately show the new row,
- * since the `Application` row appears asynchronously after this call
- * returns (see docs/frontend/user-flows.md#job-submission-flow); that's
- * expected, not a bug, and not something to paper over with a client-side
- * poll started from inside this mutation (a page-specific UX decision left
- * to the consuming feature agent).
+ * Invalidates `queryKeys.applications()` on success per api-mapping.md —
+ * note this alone will not immediately show the new row, since the
+ * `Application` row appears asynchronously after this call returns (see
+ * docs/frontend/user-flows.md#job-submission-flow); that's expected, not a
+ * bug, and not something to paper over with a client-side poll started
+ * from inside this mutation (a page-specific UX decision left to the
+ * consuming feature agent).
  */
 export function useIngestJobUrl() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: IngestJobUrlRequest) => ingestJobUrl(body),
-    onSuccess: (_data, variables) => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.applications(variables.user_id) })
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.applications() })
     },
   })
 }

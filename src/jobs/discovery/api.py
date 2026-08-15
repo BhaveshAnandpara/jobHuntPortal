@@ -8,17 +8,18 @@ Mounted into the app in api/main.py.
 """
 
 from typing import Annotated
-from uuid import UUID, uuid4
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from infrastructure.auth import CurrentUserIdDependency
 from jobs.discovery.dependencies import get_job_source_repository
 from jobs.discovery.errors import JobDiscoveryError
 from jobs.repository import JobSourceRepository
 from shared.errors.codes import ErrorCode
 from shared.types.api.jobs import CreateJobSourceRequest, JobSourceResponse
 from shared.types.domain.job_source import JobSource
-from shared.types.ids import JobSourceId, UserId
+from shared.types.ids import JobSourceId
 
 router = APIRouter(tags=["job-discovery"])
 
@@ -57,6 +58,7 @@ def _source_response(source: JobSource) -> JobSourceResponse:
 )
 async def create_job_source(
     request: CreateJobSourceRequest,
+    user_id: CurrentUserIdDependency,
     repository: JobSourceRepositoryDependency,
 ) -> JobSourceResponse:
     name = request.name.strip()
@@ -67,7 +69,7 @@ async def create_job_source(
 
     source = JobSource(
         id=JobSourceId(uuid4()),
-        user_id=request.user_id,
+        user_id=user_id,
         name=name,
         type=request.type,
         query_config=request.query_config,
@@ -80,10 +82,10 @@ async def create_job_source(
 
 @router.get("/job-sources", response_model=list[JobSourceResponse])
 async def list_job_sources(
-    user_id: Annotated[UUID, Query(...)],
+    user_id: CurrentUserIdDependency,
     repository: JobSourceRepositoryDependency,
 ) -> list[JobSourceResponse]:
-    sources = await repository.list_for_user(UserId(user_id))
+    sources = await repository.list_for_user(user_id)
     return [_source_response(source) for source in sources]
 
 

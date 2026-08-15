@@ -55,6 +55,7 @@ from matching.api import router as matching_router
 from outreach.api import router as outreach_router
 from profiles.api import router as profiles_router
 from tracking.api import router as tracking_router
+from users.api import auth_router
 from users.api import router as users_router
 
 logger = get_logger(__name__)
@@ -76,6 +77,7 @@ app = FastAPI(
 )
 
 app.include_router(users_router)
+app.include_router(auth_router)
 app.include_router(profiles_router)
 app.include_router(job_ingestion_router)
 app.include_router(job_discovery_router)

@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from infrastructure.auth import CurrentUserIdDependency
 from infrastructure.kafka.serialization import new_correlation_id
 from infrastructure.logging import format_context, get_logger
 from shared.errors.codes import ErrorCode
@@ -27,7 +28,7 @@ from shared.types.domain.application import Application
 from shared.types.domain.application_history import ApplicationHistory
 from shared.types.dto import ApplicationStatusUpdate
 from shared.types.enums import ApplicationStatus
-from shared.types.ids import ApplicationHistoryId, ApplicationId, UserId
+from shared.types.ids import ApplicationHistoryId, ApplicationId
 from tracking.api.dependencies import (
     get_application_history_repository,
     get_application_repository,
@@ -175,11 +176,11 @@ def _history_response(entry: ApplicationHistory) -> ApplicationHistoryResponse:
 
 @router.get("/applications", response_model=list[ApplicationResponse])
 async def list_applications(
-    user_id: UUID,
+    user_id: CurrentUserIdDependency,
     repository: ApplicationRepositoryDep,
     status: ApplicationStatus | None = None,
 ) -> list[ApplicationResponse]:
-    applications = await repository.list_for_user(UserId(user_id), status)
+    applications = await repository.list_for_user(user_id, status)
     return [_application_response(application) for application in applications]
 
 

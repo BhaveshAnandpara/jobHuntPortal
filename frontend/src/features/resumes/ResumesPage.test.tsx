@@ -25,10 +25,11 @@ import { API_BASE_URL } from '../../api/client'
 import { ResumesPage } from './ResumesPage'
 import { Toaster } from '../../components'
 import { IdentityProvider } from '../../hooks/IdentityProvider'
-import { setCurrentUserId } from '../../hooks/identity'
+import { setToken } from '../../hooks/identity'
+import { mintTestToken } from '../../../tests/support/jwt'
 
 function renderResumesPage() {
-  setCurrentUserId('user-1')
+  setToken(mintTestToken('user-1'))
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })

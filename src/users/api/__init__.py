@@ -1,13 +1,15 @@
-"""User Service API router.
+"""User Service API routers.
 
 Owned endpoints (docs/architecture/api-contracts.md#user-service):
-    POST /users
-    GET  /users/{user_id}/preferences
-    PUT  /users/{user_id}/preferences
+    POST /users               (router)
+    GET  /users/me/preferences  (router)
+    PUT  /users/me/preferences  (router)
+    POST /auth/login          (auth_router)
 
 Mounted into the app in api/main.py.
 """
 
+from users.api.auth_routes import router as auth_router
 from users.api.routes import router
 
-__all__ = ["router"]
+__all__ = ["auth_router", "router"]

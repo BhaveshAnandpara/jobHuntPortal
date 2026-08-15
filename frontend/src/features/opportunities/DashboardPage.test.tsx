@@ -14,12 +14,13 @@ import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { server } from '../../../tests/mocks/server'
 import { API_BASE_URL } from '../../api/client'
-import { setCurrentUserId } from '../../hooks/identity'
+import { setToken } from '../../hooks/identity'
+import { mintTestToken } from '../../../tests/support/jwt'
 import { IdentityProvider } from '../../hooks/IdentityProvider'
 import { DashboardPage } from './DashboardPage'
 
 function renderDashboard() {
-  setCurrentUserId('user-1')
+  setToken(mintTestToken('user-1'))
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })

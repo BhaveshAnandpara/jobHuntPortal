@@ -19,6 +19,10 @@ export type UserResponse = Schemas['UserResponse']
 export type UserPreferencesResponse = Schemas['UserPreferencesResponse']
 export type UpdateUserPreferencesRequest = Schemas['UpdateUserPreferencesRequest']
 
+// Auth (User Service) — see api/auth.ts
+export type LoginRequest = Schemas['LoginRequest']
+export type LoginResponse = Schemas['LoginResponse']
+
 // Resume/Profile Service
 export type CreateResumeRequest = Schemas['CreateResumeRequest']
 export type ResumeResponse = Schemas['ResumeResponse']

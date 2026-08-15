@@ -25,3 +25,7 @@ htmlcov/
 # Runtime application logs (infrastructure/logging) — never committed.
 logs/
 *.log
+
+# Uploaded resume files (profiles/storage.py's LocalResumeStorage) — user
+# data, never committed.
+data/resumes/

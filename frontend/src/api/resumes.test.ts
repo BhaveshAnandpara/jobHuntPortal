@@ -19,8 +19,8 @@ function makeFile(name = 'resume.pdf', content = '%PDF-1.4 fake') {
 }
 
 describe('resumes.ts functions', () => {
-  it('listResumes resolves the list for a user', async () => {
-    const result = await listResumes('user-1')
+  it('listResumes resolves the list for the authenticated user', async () => {
+    const result = await listResumes()
 
     expect(result).toHaveLength(1)
     expect(result[0].user_id).toBe('user-1')
@@ -40,10 +40,9 @@ describe('resumes.ts functions', () => {
       }),
     )
 
-    const result = await uploadResume('user-1', makeFile())
+    const result = await uploadResume(makeFile())
 
     expect(receivedContentType).toContain('application/json')
-    expect(receivedBody?.user_id).toBe('user-1')
     expect(receivedBody?.file_name).toBe('resume.pdf')
     expect(typeof receivedBody?.file_content).toBe('string')
     expect(receivedBody?.file_content).toBe(btoa('%PDF-1.4 fake'))
@@ -57,20 +56,20 @@ describe('resumes.ts functions', () => {
       ),
     )
 
-    const error = await uploadResume('user-1', makeFile()).catch((e: unknown) => e)
+    const error = await uploadResume(makeFile()).catch((e: unknown) => e)
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).code).toBe('VALIDATION_ERROR')
   })
 
-  it('uploadResume surfaces a 404 (unknown user_id) as ApiError', async () => {
+  it('uploadResume surfaces a 404 as ApiError', async () => {
     server.use(
       http.post(`${API_BASE_URL}/resumes`, () =>
         HttpResponse.json({ detail: { code: 'NOT_FOUND', message: 'User not found' } }, { status: 404 }),
       ),
     )
 
-    const error = await uploadResume('missing-user', makeFile()).catch((e: unknown) => e)
+    const error = await uploadResume(makeFile()).catch((e: unknown) => e)
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).status).toBe(404)
@@ -83,7 +82,7 @@ describe('resumes.ts functions', () => {
   it('propagates a network failure from listResumes as ApiError', async () => {
     server.use(http.get(`${API_BASE_URL}/resumes`, () => HttpResponse.error()))
 
-    const error = await listResumes('user-1').catch((e: unknown) => e)
+    const error = await listResumes().catch((e: unknown) => e)
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).code).toBe('NETWORK_ERROR')
@@ -91,11 +90,8 @@ describe('resumes.ts functions', () => {
 })
 
 describe('resumes.ts hooks', () => {
-  it('useResumes resolves the list and does not fire when userId is empty', async () => {
-    const { result: empty } = renderHook(() => useResumes(''), { wrapper: createWrapper() })
-    expect(empty.current.fetchStatus).toBe('idle')
-
-    const { result } = renderHook(() => useResumes('user-1'), { wrapper: createWrapper() })
+  it('useResumes resolves the list', async () => {
+    const { result } = renderHook(() => useResumes(), { wrapper: createWrapper() })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(result.current.data).toHaveLength(1)
   })
@@ -113,7 +109,7 @@ describe('resumes.ts hooks', () => {
       }),
     )
 
-    const { result } = renderHook(() => useResumes('user-1'), { wrapper: createWrapper() })
+    const { result } = renderHook(() => useResumes(), { wrapper: createWrapper() })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(result.current.data?.[0].status).toBe('PARSING')
     expect(callCount).toBe(1)
@@ -155,8 +151,7 @@ describe('resumes.ts hooks', () => {
     )
 
     const { result, rerender } = renderHook(
-      ({ pendingResumeIds }: { pendingResumeIds?: ReadonlySet<string> }) =>
-        useResumes('user-1', { pendingResumeIds }),
+      ({ pendingResumeIds }: { pendingResumeIds?: ReadonlySet<string> }) => useResumes({ pendingResumeIds }),
       { wrapper: createWrapper(), initialProps: {} },
     )
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
@@ -186,7 +181,7 @@ describe('resumes.ts hooks', () => {
     vi.useRealTimers()
   })
 
-  it('useUploadResume invalidates resumes and profiles queries for that userId on success', async () => {
+  it('useUploadResume invalidates resumes and profiles queries on success', async () => {
     let resumesCalls = 0
     let profilesCalls = 0
     server.use(
@@ -200,22 +195,22 @@ describe('resumes.ts hooks', () => {
       }),
     )
     const wrapper = createWrapper()
-    const { result: resumesResult } = renderHook(() => useResumes('user-1'), { wrapper })
-    const { result: profilesResult } = renderHook(() => useProfiles('user-1'), { wrapper })
+    const { result: resumesResult } = renderHook(() => useResumes(), { wrapper })
+    const { result: profilesResult } = renderHook(() => useProfiles(), { wrapper })
     await waitFor(() => expect(resumesResult.current.isSuccess).toBe(true))
     await waitFor(() => expect(profilesResult.current.isSuccess).toBe(true))
     expect(resumesCalls).toBe(1)
     expect(profilesCalls).toBe(1)
 
     const { result: uploadResult } = renderHook(() => useUploadResume(), { wrapper })
-    uploadResult.current.mutate({ userId: 'user-1', file: makeFile() })
+    uploadResult.current.mutate(makeFile())
 
     await waitFor(() => expect(uploadResult.current.isSuccess).toBe(true))
     await waitFor(() => expect(resumesCalls).toBe(2))
     await waitFor(() => expect(profilesCalls).toBe(2))
   })
 
-  it('useDeleteResume invalidates resumes and profiles queries for that userId on success', async () => {
+  it('useDeleteResume invalidates resumes and profiles queries on success', async () => {
     let resumesCalls = 0
     server.use(
       http.get(`${API_BASE_URL}/resumes`, () => {
@@ -224,12 +219,12 @@ describe('resumes.ts hooks', () => {
       }),
     )
     const wrapper = createWrapper()
-    const { result: resumesResult } = renderHook(() => useResumes('user-1'), { wrapper })
+    const { result: resumesResult } = renderHook(() => useResumes(), { wrapper })
     await waitFor(() => expect(resumesResult.current.isSuccess).toBe(true))
     expect(resumesCalls).toBe(1)
 
     const { result: deleteResult } = renderHook(() => useDeleteResume(), { wrapper })
-    deleteResult.current.mutate({ resumeId: 'resume-1', userId: 'user-1' })
+    deleteResult.current.mutate({ resumeId: 'resume-1' })
 
     await waitFor(() => expect(deleteResult.current.isSuccess).toBe(true))
     await waitFor(() => expect(resumesCalls).toBe(2))

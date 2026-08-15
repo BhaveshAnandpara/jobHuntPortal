@@ -54,6 +54,7 @@ async def session() -> AsyncIterator[AsyncSession]:
 class FakeUserRepository:
     def __init__(self) -> None:
         self.users: dict[UserId, User] = {}
+        self.password_hashes: dict[UserId, str] = {}
 
     async def get(self, user_id: UserId) -> User | None:
         return self.users.get(user_id)
@@ -61,8 +62,15 @@ class FakeUserRepository:
     async def get_by_email(self, email: str) -> User | None:
         return next((u for u in self.users.values() if u.email == email), None)
 
-    async def add(self, user: User) -> User:
+    async def get_by_email_with_hash(self, email: str) -> tuple[User, str] | None:
+        user = await self.get_by_email(email)
+        if user is None:
+            return None
+        return user, self.password_hashes[user.id]
+
+    async def add(self, user: User, password_hash: str) -> User:
         self.users[user.id] = user
+        self.password_hashes[user.id] = password_hash
         return user
 
 

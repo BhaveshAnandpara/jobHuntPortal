@@ -1,11 +1,16 @@
 /**
- * The one client-persisted piece of state in this app: the active
- * `user_id`. There is no authentication/session endpoint on the backend
- * (confirmed — see docs/frontend/architecture.md#no-authentication-layer-yet)
- * so this is a plain localStorage value, not a real session — never treat
- * it as secure, and never build anything here that implies otherwise. See
- * docs/frontend/state-management.md#persisted-user-state and
- * docs/frontend/routes.md#welcome--onboarding.
+ * The one client-persisted piece of auth state in this app: a JWT
+ * (`jobhunt.token`, see `./identity`), issued by real
+ * `POST /users`/`POST /auth/login` calls and sent as
+ * `Authorization: Bearer <token>` on every request (`api/client.ts`).
+ * `userId` is derived from the token client-side (display/cache-key only —
+ * the backend is the sole verifier). See docs/frontend/state-management.md
+ * #persisted-user-state and docs/frontend/routes.md#welcome--onboarding.
+ *
+ * Clears the shared React Query cache on every `setToken`/`clearToken` —
+ * only one account is ever "logged in" per browser session, but without
+ * this a second account signing in on the same browser would see the
+ * first account's cached data until every query happened to refetch.
  *
  * Owner: frontend-shell-agent (this lives under src/hooks per
  * docs/frontend/repository-structure.md, but `app/providers.tsx` is the
@@ -15,24 +20,29 @@
  */
 
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
-import { getCurrentUserId, setCurrentUserId, clearCurrentUserId, IdentityContext } from './identity'
+import { queryClient } from '../app/queryClient'
+import { getToken, setToken as persistToken, clearToken as removeToken, decodeUserId, IdentityContext } from './identity'
 
 export function IdentityProvider({ children }: { children: ReactNode }) {
-  const [userId, setUserIdState] = useState<string | null>(() => getCurrentUserId())
+  const [token, setTokenState] = useState<string | null>(() => getToken())
 
-  const setUserId = useCallback((next: string) => {
-    setCurrentUserId(next)
-    setUserIdState(next)
+  const setToken = useCallback((next: string) => {
+    persistToken(next)
+    setTokenState(next)
+    queryClient.clear()
   }, [])
 
-  const clearUserId = useCallback(() => {
-    clearCurrentUserId()
-    setUserIdState(null)
+  const clearToken = useCallback(() => {
+    removeToken()
+    setTokenState(null)
+    queryClient.clear()
   }, [])
+
+  const userId = useMemo(() => (token ? decodeUserId(token) : null), [token])
 
   const value = useMemo(
-    () => ({ userId, setUserId, clearUserId }),
-    [userId, setUserId, clearUserId],
+    () => ({ token, userId, setToken, clearToken }),
+    [token, userId, setToken, clearToken],
   )
 
   return <IdentityContext.Provider value={value}>{children}</IdentityContext.Provider>

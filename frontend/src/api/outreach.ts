@@ -13,8 +13,8 @@ import { queryKeys } from './queryKeys'
 import type { ApproveOutreachRequest, EditOutreachRequest, OutreachResponse } from './types'
 import type { RefetchInterval } from '../hooks/usePolling'
 
-export function listOutreach(userId: string, status?: string): Promise<OutreachResponse[]> {
-  const query = status ? `?user_id=${userId}&status=${status}` : `?user_id=${userId}`
+export function listOutreach(status?: string): Promise<OutreachResponse[]> {
+  const query = status ? `?status=${status}` : ''
   return apiClient.get<OutreachResponse[]>(`/outreach${query}`)
 }
 
@@ -47,14 +47,12 @@ export function editOutreach(
  * controls `refetchInterval` rather than this hook hard-coding one.
  */
 export function useOutreachList(
-  userId: string,
   status?: string,
   options?: { refetchInterval?: RefetchInterval<OutreachResponse[]> },
 ) {
   return useQuery({
-    queryKey: queryKeys.outreachList(userId, status),
-    queryFn: () => listOutreach(userId, status),
-    enabled: Boolean(userId),
+    queryKey: queryKeys.outreachList(status),
+    queryFn: () => listOutreach(status),
     refetchInterval: options?.refetchInterval,
   })
 }
@@ -93,8 +91,7 @@ function refetchOutreachItemOn409(
  * api-contracts.md#post-outreachoutreach_idapprove) that a Tracking Service
  * consumer reacts to, asynchronously moving the linked `Application`
  * through `OUTREACH_APPROVED`/`OUTREACH_SENT`. So approve also invalidates
- * `queryKeys.applications(userId)` (always addressable — the caller has
- * the active user) and, when the caller supplies it,
+ * `queryKeys.applications()` and, when the caller supplies it,
  * `queryKeys.application(applicationId)` /
  * `queryKeys.history(applicationId)` — `OutreachResponse` itself carries no
  * `application_id` (only `job_id`, which isn't a lookup key for a specific
@@ -110,14 +107,13 @@ export function useApproveOutreach() {
       body,
     }: {
       outreachId: string
-      userId: string
       applicationId?: string
       body: ApproveOutreachRequest
     }) => approveOutreach(outreachId, body),
     onSuccess: (_data, variables) => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.outreachList(variables.userId) })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.outreachList() })
       void queryClient.invalidateQueries({ queryKey: queryKeys.outreachItem(variables.outreachId) })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.applications(variables.userId) })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.applications() })
       if (variables.applicationId) {
         void queryClient.invalidateQueries({ queryKey: queryKeys.application(variables.applicationId) })
         void queryClient.invalidateQueries({ queryKey: queryKeys.history(variables.applicationId) })
@@ -141,10 +137,9 @@ export function useApproveOutreach() {
 export function useRejectOutreach() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ outreachId }: { outreachId: string; userId: string }) =>
-      rejectOutreach(outreachId),
+    mutationFn: ({ outreachId }: { outreachId: string }) => rejectOutreach(outreachId),
     onSuccess: (_data, variables) => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.outreachList(variables.userId) })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.outreachList() })
       void queryClient.invalidateQueries({ queryKey: queryKeys.outreachItem(variables.outreachId) })
     },
     onError: (error, variables) => {
@@ -166,11 +161,10 @@ export function useEditOutreach() {
       body,
     }: {
       outreachId: string
-      userId: string
       body: EditOutreachRequest
     }) => editOutreach(outreachId, body),
     onSuccess: (_data, variables) => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.outreachList(variables.userId) })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.outreachList() })
       void queryClient.invalidateQueries({ queryKey: queryKeys.outreachItem(variables.outreachId) })
     },
     onError: (error, variables) => {

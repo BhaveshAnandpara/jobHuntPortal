@@ -185,7 +185,7 @@ async def test_cross_profession_flow_uses_identical_code_path(
 
     user = harness.create_user()
     harness.set_profiles_llm([llm_response(scenario["profile_fields"])])
-    harness.upload_resume(user["id"], scenario["resume_file"], scenario["resume_text"])
+    harness.upload_resume(user, scenario["resume_file"], scenario["resume_text"])
 
     harness.set_job_ingestion_fakes(
         pages={scenario["job_url"]: scenario["job_page_text"]},
@@ -193,10 +193,10 @@ async def test_cross_profession_flow_uses_identical_code_path(
             scenario["job_page_text"]: make_extracted_fields(**scenario["job_fields"])
         },
     )
-    job = harness.ingest_job(user["id"], scenario["job_url"])
+    job = harness.ingest_job(user, scenario["job_url"])
     job_id = job["id"]
 
-    harness.sync_matching_profiles(user["id"])
+    harness.sync_matching_profiles(user)
     harness.set_matching_preferences(FakeUserPreferencesClient({}))
     harness.set_matching_llm(
         MatchingFakeLLMClient(

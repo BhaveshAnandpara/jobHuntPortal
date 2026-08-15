@@ -23,7 +23,6 @@ import { toast } from 'sonner'
 import { Button, Card, ErrorState, FieldError, Input, PageHeader, Select, Skeleton } from '../../components'
 import { usePreferences, useUpdatePreferences } from '../../api/users'
 import { toApiError } from '../../api/client'
-import { useCurrentUserId } from '../../hooks/identity'
 import type {
   RemoteWorkPreference,
   UpdateUserPreferencesRequest,
@@ -92,9 +91,7 @@ function PreferencesFormSkeleton() {
 }
 
 export function SettingsPage() {
-  const { userId } = useCurrentUserId()
-  const activeUserId = userId ?? ''
-  const preferencesQuery = usePreferences(activeUserId)
+  const preferencesQuery = usePreferences()
   const updatePreferences = useUpdatePreferences()
   const [serverError, setServerError] = useState<string | null>(null)
 
@@ -123,7 +120,6 @@ export function SettingsPage() {
   }, [preferencesQuery.isSuccess, preferencesQuery.isError, preferencesQuery.data, isUnset])
 
   function onSubmit(values: SettingsFormValues) {
-    if (!userId) return
     setServerError(null)
 
     const body: UpdateUserPreferencesRequest = {
@@ -139,7 +135,7 @@ export function SettingsPage() {
     }
 
     updatePreferences.mutate(
-      { userId, body },
+      body,
       {
         onSuccess: () => {
           toast.success('Preferences saved.')

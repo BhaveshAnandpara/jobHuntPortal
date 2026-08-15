@@ -1,9 +1,9 @@
 /**
- * `/welcome` behavior — see docs/frontend/routes.md#welcome--onboarding and
- * docs/frontend/user-flows.md#first-visit-flow. Covers: creating an
- * identity and navigating to `/`, redirecting away (without creating a
- * duplicate user) when an identity already exists, and both client-side
- * and backend `VALIDATION_ERROR` handling.
+ * `/register` behavior — replaces the old `/welcome` no-password identity
+ * creation flow (see `RegisterPage.tsx`'s header). Covers: creating an
+ * account, persisting the token, and navigating to `/`; redirecting away
+ * (without creating a duplicate account) when a token already exists; and
+ * both client-side and backend `VALIDATION_ERROR` handling.
  *
  * Owner: frontend-profile-agent.
  */
@@ -15,21 +15,22 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { server } from '../../../tests/mocks/server'
+import { mintTestToken } from '../../../tests/support/jwt'
 import { API_BASE_URL } from '../../api/client'
-import { WelcomePage } from './WelcomePage'
+import { RegisterPage } from './RegisterPage'
 import { IdentityProvider } from '../../hooks/IdentityProvider'
-import { setCurrentUserId } from '../../hooks/identity'
+import { setToken } from '../../hooks/identity'
 
-function renderWelcome() {
+function renderRegister() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   return render(
     <QueryClientProvider client={queryClient}>
       <IdentityProvider>
-        <MemoryRouter initialEntries={['/welcome']}>
+        <MemoryRouter initialEntries={['/register']}>
           <Routes>
-            <Route path="/welcome" element={<WelcomePage />} />
+            <Route path="/register" element={<RegisterPage />} />
             <Route path="/" element={<div>Dashboard Placeholder</div>} />
           </Routes>
         </MemoryRouter>
@@ -38,37 +39,42 @@ function renderWelcome() {
   )
 }
 
-describe('WelcomePage', () => {
-  it('redirects to / without creating a user when an identity already exists', () => {
-    setCurrentUserId('user-existing')
+describe('RegisterPage', () => {
+  it('redirects to / without creating an account when a token already exists', () => {
+    setToken(mintTestToken('user-existing'))
     let createCalls = 0
     server.use(
       http.post(`${API_BASE_URL}/users`, () => {
         createCalls += 1
         return HttpResponse.json(
-          { id: 'user-new', email: 'x@example.com', display_name: 'X', created_at: '2026-01-01T00:00:00Z' },
+          {
+            access_token: 'new.token',
+            token_type: 'bearer',
+            user: { id: 'user-new', email: 'x@example.com', display_name: 'X', created_at: '2026-01-01T00:00:00Z' },
+          },
           { status: 201 },
         )
       }),
     )
 
-    renderWelcome()
+    renderRegister()
 
     expect(screen.getByText('Dashboard Placeholder')).toBeInTheDocument()
     expect(screen.queryByLabelText('Email')).not.toBeInTheDocument()
     expect(createCalls).toBe(0)
   })
 
-  it('creates an identity, persists the id, and navigates to / on success', async () => {
-    renderWelcome()
+  it('creates an account, persists the token, and navigates to / on success', async () => {
+    renderRegister()
 
     await userEvent.type(screen.getByLabelText('Email'), 'ada@example.com')
     await userEvent.type(screen.getByLabelText('Display name'), 'Ada Lovelace')
-    await userEvent.click(screen.getByRole('button', { name: 'Create identity' }))
+    await userEvent.type(screen.getByLabelText('Password'), 'correct-password-123')
+    await userEvent.click(screen.getByRole('button', { name: 'Create account' }))
 
     await waitFor(() => expect(screen.getByText('Dashboard Placeholder')).toBeInTheDocument())
-    // The default MSW handler (tests/mocks/handlers.ts) returns id: 'user-1'.
-    expect(localStorage.getItem('jobhunt.userId')).toBe('user-1')
+    // The default MSW handler (tests/mocks/handlers.ts) returns access_token: 'test.jwt.token'.
+    expect(localStorage.getItem('jobhunt.token')).toBe('test.jwt.token')
   })
 
   it('shows a client-side validation error and does not submit when email is missing', async () => {
@@ -77,18 +83,34 @@ describe('WelcomePage', () => {
       http.post(`${API_BASE_URL}/users`, () => {
         createCalls += 1
         return HttpResponse.json(
-          { id: 'user-1', email: 'a@example.com', display_name: 'Ada', created_at: '2026-01-01T00:00:00Z' },
+          {
+            access_token: 'x',
+            token_type: 'bearer',
+            user: { id: 'user-1', email: 'a@example.com', display_name: 'Ada', created_at: '2026-01-01T00:00:00Z' },
+          },
           { status: 201 },
         )
       }),
     )
-    renderWelcome()
+    renderRegister()
 
     await userEvent.type(screen.getByLabelText('Display name'), 'Ada Lovelace')
-    await userEvent.click(screen.getByRole('button', { name: 'Create identity' }))
+    await userEvent.type(screen.getByLabelText('Password'), 'correct-password-123')
+    await userEvent.click(screen.getByRole('button', { name: 'Create account' }))
 
     expect(await screen.findByText(/valid email/i)).toBeInTheDocument()
     expect(createCalls).toBe(0)
+  })
+
+  it('shows a client-side validation error and does not submit when password is too short', async () => {
+    renderRegister()
+
+    await userEvent.type(screen.getByLabelText('Email'), 'ada@example.com')
+    await userEvent.type(screen.getByLabelText('Display name'), 'Ada Lovelace')
+    await userEvent.type(screen.getByLabelText('Password'), 'short')
+    await userEvent.click(screen.getByRole('button', { name: 'Create account' }))
+
+    expect(await screen.findByText(/at least 8 characters/i)).toBeInTheDocument()
   })
 
   it('shows an inline error and keeps the form populated on a backend 400 VALIDATION_ERROR', async () => {
@@ -100,22 +122,20 @@ describe('WelcomePage', () => {
         ),
       ),
     )
-    renderWelcome()
+    renderRegister()
 
     await userEvent.type(screen.getByLabelText('Email'), 'ada@example.com')
     await userEvent.type(screen.getByLabelText('Display name'), 'Ada Lovelace')
-    await userEvent.click(screen.getByRole('button', { name: 'Create identity' }))
+    await userEvent.type(screen.getByLabelText('Password'), 'correct-password-123')
+    await userEvent.click(screen.getByRole('button', { name: 'Create account' }))
 
     expect(await screen.findByText('This email is already registered.')).toBeInTheDocument()
     expect(screen.getByLabelText('Email')).toHaveValue('ada@example.com')
     expect(screen.getByLabelText('Display name')).toHaveValue('Ada Lovelace')
   })
 
-  it('never implies real authentication (no password field or login control)', () => {
-    renderWelcome()
-    expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /log ?in|sign ?in/i })).not.toBeInTheDocument()
-    // The page positively reassures the user this isn't a real account/session.
-    expect(screen.getByText(/no password/i)).toBeInTheDocument()
+  it('links to /login for an existing account', () => {
+    renderRegister()
+    expect(screen.getByRole('link', { name: 'Log in' })).toHaveAttribute('href', '/login')
   })
 })

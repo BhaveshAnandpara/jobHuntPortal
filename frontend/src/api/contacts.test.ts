@@ -36,14 +36,12 @@ describe('contacts.ts functions', () => {
     )
 
     const result = await triggerContactSearch('job-1', {
-      user_id: 'user-1',
       company: 'Acme Robotics',
       title: 'Senior Backend Engineer',
       location: 'Remote',
     })
 
     expect(receivedBody).toEqual({
-      user_id: 'user-1',
       company: 'Acme Robotics',
       title: 'Senior Backend Engineer',
       location: 'Remote',
@@ -59,7 +57,6 @@ describe('contacts.ts functions', () => {
     )
 
     const error = await triggerContactSearch('job-1', {
-      user_id: 'user-1',
       company: '',
       title: '',
       location: null,
@@ -105,7 +102,7 @@ describe('contacts.ts hooks', () => {
     const { result: triggerResult } = renderHook(() => useTriggerContactSearch(), { wrapper })
     triggerResult.current.mutate({
       jobId: 'job-1',
-      body: { user_id: 'user-1', company: 'Acme Robotics', title: 'Senior Backend Engineer', location: 'Remote' },
+      body: { company: 'Acme Robotics', title: 'Senior Backend Engineer', location: 'Remote' },
     })
 
     await waitFor(() => expect(triggerResult.current.isSuccess).toBe(true))

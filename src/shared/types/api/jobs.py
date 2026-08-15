@@ -24,7 +24,6 @@ from shared.types.ids import JobId, JobSourceId, UserId
 
 
 class IngestJobUrlRequest(BaseModel):
-    user_id: UserId
     url: str
 
 
@@ -43,7 +42,6 @@ class JobResponse(BaseModel):
 
 
 class CreateJobSourceRequest(BaseModel):
-    user_id: UserId
     name: str
     type: JobSourceType
     query_config: dict[str, Any] | None = None
@@ -61,8 +59,8 @@ class JobSourceResponse(BaseModel):
 
 
 __all__ = [
+    "CreateJobSourceRequest",
     "IngestJobUrlRequest",
     "JobResponse",
-    "CreateJobSourceRequest",
     "JobSourceResponse",
 ]

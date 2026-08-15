@@ -1,17 +1,22 @@
 """User Service route handlers.
 
 Owned endpoints (docs/architecture/api-contracts.md#user-service):
-    POST /users
-    GET  /users/{user_id}/preferences
-    PUT  /users/{user_id}/preferences
+    POST /users                    (also mints a token — auto-login on
+                                     registration, see `_login_response`)
+    GET  /users/me/preferences     (identity from the bearer token, not
+                                     a path param — see `POST /auth/login`
+                                     in auth_routes.py for how the token
+                                     is obtained)
+    PUT  /users/me/preferences
 """
 
 from typing import Annotated
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from infrastructure.auth import CurrentUserIdDependency, create_access_token
 from shared.errors.codes import ErrorCode
+from shared.types.api.auth import LoginResponse
 from shared.types.api.users import (
     CreateUserRequest,
     UpdateUserPreferencesRequest,
@@ -20,7 +25,6 @@ from shared.types.api.users import (
 )
 from shared.types.domain.user import User
 from shared.types.domain.user_preferences import UserPreferences
-from shared.types.ids import UserId
 from users.api.dependencies import get_user_service
 from users.service import UserError, UserService
 
@@ -31,6 +35,7 @@ UserServiceDependency = Annotated[UserService, Depends(get_user_service)]
 _STATUS_BY_ERROR_CODE = {
     ErrorCode.VALIDATION_ERROR: status.HTTP_400_BAD_REQUEST,
     ErrorCode.NOT_FOUND: status.HTTP_404_NOT_FOUND,
+    ErrorCode.UNAUTHORIZED: status.HTTP_401_UNAUTHORIZED,
 }
 
 
@@ -50,6 +55,10 @@ def _user_response(user: User) -> UserResponse:
     )
 
 
+def _login_response(user: User) -> LoginResponse:
+    return LoginResponse(access_token=create_access_token(user.id), user=_user_response(user))
+
+
 def _preferences_response(preferences: UserPreferences) -> UserPreferencesResponse:
     return UserPreferencesResponse(
         id=preferences.id,
@@ -64,37 +73,37 @@ def _preferences_response(preferences: UserPreferences) -> UserPreferencesRespon
     )
 
 
-@router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     request: CreateUserRequest,
     service: UserServiceDependency,
-) -> UserResponse:
+) -> LoginResponse:
     try:
-        return _user_response(await service.create_user(request))
+        return _login_response(await service.create_user(request))
     except UserError as error:
         raise _http_error(error) from error
 
 
-@router.get("/{user_id}/preferences", response_model=UserPreferencesResponse)
+@router.get("/me/preferences", response_model=UserPreferencesResponse)
 async def get_preferences(
-    user_id: UUID,
+    user_id: CurrentUserIdDependency,
     service: UserServiceDependency,
 ) -> UserPreferencesResponse:
     try:
-        return _preferences_response(await service.get_preferences(UserId(user_id)))
+        return _preferences_response(await service.get_preferences(user_id))
     except UserError as error:
         raise _http_error(error) from error
 
 
-@router.put("/{user_id}/preferences", response_model=UserPreferencesResponse)
+@router.put("/me/preferences", response_model=UserPreferencesResponse)
 async def replace_preferences(
-    user_id: UUID,
+    user_id: CurrentUserIdDependency,
     request: UpdateUserPreferencesRequest,
     service: UserServiceDependency,
 ) -> UserPreferencesResponse:
     try:
         return _preferences_response(
-            await service.replace_preferences(UserId(user_id), request)
+            await service.replace_preferences(user_id, request)
         )
     except UserError as error:
         raise _http_error(error) from error

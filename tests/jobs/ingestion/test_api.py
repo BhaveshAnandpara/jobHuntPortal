@@ -9,6 +9,7 @@ from uuid import uuid4
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from infrastructure.auth.dependencies import get_current_user_id
 from infrastructure.kafka.in_memory import InMemoryBroker, InMemoryProducerClient
 from infrastructure.kafka.producer import EventProducer
 from infrastructure.kafka.topics import Topic
@@ -19,6 +20,7 @@ from jobs.ingestion.dependencies import (
     get_page_fetcher,
     get_structured_extractor,
 )
+from shared.types.ids import UserId
 from tests.jobs.conftest import (
     FakeExtractor,
     FakeJobRepository,
@@ -37,7 +39,8 @@ def _client(
     errors: dict[str, Exception] | None = None,
     extractor_by_content: dict | None = None,
     broker: InMemoryBroker | None = None,
-) -> tuple[TestClient, FakeJobRepository, InMemoryBroker]:
+    user_id: UserId | None = None,
+) -> tuple[TestClient, FakeJobRepository, InMemoryBroker, UserId]:
     app = FastAPI()
     app.include_router(router)
 
@@ -46,27 +49,28 @@ def _client(
     extractor = FakeExtractor(by_content=extractor_by_content or {})
     broker = broker if broker is not None else InMemoryBroker()
     producer = EventProducer("job-ingestion-service", client=InMemoryProducerClient(broker))
+    user_id = user_id if user_id is not None else UserId(uuid4())
 
     app.dependency_overrides[get_job_repository] = lambda: repository
     app.dependency_overrides[get_page_fetcher] = lambda: fetcher
     app.dependency_overrides[get_structured_extractor] = lambda: extractor
     app.dependency_overrides[get_event_producer] = lambda: producer
+    app.dependency_overrides[get_current_user_id] = lambda: user_id
 
-    return TestClient(app), repository, broker
+    return TestClient(app), repository, broker, user_id
 
 
 def test_ingest_job_url_success_returns_202() -> None:
-    client, repository, broker = _client(
+    client, repository, broker, user_id = _client(
         pages={URL: "posting body"},
         extractor_by_content={"posting body": make_extracted_fields(company="Acme")},
     )
 
-    response = client.post(
-        "/jobs/ingest-url", json={"user_id": str(uuid4()), "url": URL}
-    )
+    response = client.post("/jobs/ingest-url", json={"url": URL})
 
     assert response.status_code == 202
     body = response.json()
+    assert body["user_id"] == str(user_id)  # sourced from the (overridden) token, not the request
     assert body["company"] == "Acme"
     assert body["processing_status"] == "NORMALIZED"
     assert body["location"] == "Remote"
@@ -78,12 +82,25 @@ def test_ingest_job_url_success_returns_202() -> None:
     assert len(broker.log(Topic.JOBS_DISCOVERED.value)) == 1
 
 
-def test_ingest_job_url_dedup_returns_same_job_and_publishes_once() -> None:
-    client, repository, broker = _client(
+def test_ingest_job_url_requires_authentication() -> None:
+    client, _repository, _broker, _user_id = _client(
         pages={URL: "posting body"},
         extractor_by_content={"posting body": make_extracted_fields()},
     )
-    payload = {"user_id": str(uuid4()), "url": URL}
+    client.app.dependency_overrides.pop(get_current_user_id)  # no override -> real dependency
+
+    response = client.post("/jobs/ingest-url", json={"url": URL})
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "UNAUTHORIZED"
+
+
+def test_ingest_job_url_dedup_returns_same_job_and_publishes_once() -> None:
+    client, repository, broker, _user_id = _client(
+        pages={URL: "posting body"},
+        extractor_by_content={"posting body": make_extracted_fields()},
+    )
+    payload = {"url": URL}
 
     first = client.post("/jobs/ingest-url", json=payload)
     second = client.post("/jobs/ingest-url", json=payload)
@@ -96,11 +113,9 @@ def test_ingest_job_url_dedup_returns_same_job_and_publishes_once() -> None:
 
 
 def test_ingest_job_url_invalid_url_returns_400() -> None:
-    client, repository, _broker = _client()
+    client, repository, _broker, _user_id = _client()
 
-    response = client.post(
-        "/jobs/ingest-url", json={"user_id": str(uuid4()), "url": "not-a-url"}
-    )
+    response = client.post("/jobs/ingest-url", json={"url": "not-a-url"})
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "INVALID_JOB_URL"
@@ -108,11 +123,9 @@ def test_ingest_job_url_invalid_url_returns_400() -> None:
 
 
 def test_ingest_job_url_fetch_failure_returns_400() -> None:
-    client, repository, broker = _client(errors={URL: RuntimeError("network down")})
+    client, repository, broker, _user_id = _client(errors={URL: RuntimeError("network down")})
 
-    response = client.post(
-        "/jobs/ingest-url", json={"user_id": str(uuid4()), "url": URL}
-    )
+    response = client.post("/jobs/ingest-url", json={"url": URL})
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "JOB_FETCH_FAILED"
@@ -121,16 +134,16 @@ def test_ingest_job_url_fetch_failure_returns_400() -> None:
 
 
 def test_ingest_job_url_malformed_request_returns_422() -> None:
-    client, _repository, _broker = _client()
+    client, _repository, _broker, _user_id = _client()
 
-    response = client.post("/jobs/ingest-url", json={"user_id": "not-a-uuid", "url": URL})
+    response = client.post("/jobs/ingest-url", json={"url": 12345})  # url must be a string
 
     assert response.status_code == 422
 
 
 def test_get_job_returns_company_and_title() -> None:
     job = make_job(uuid4(), company="Acme Robotics", title="Senior Mechanical Engineer")
-    client, _repository, _broker = _client(repository=FakeJobRepository(jobs=[job]))
+    client, _repository, _broker, _user_id = _client(repository=FakeJobRepository(jobs=[job]))
 
     response = client.get(f"/jobs/{job.id}")
 
@@ -155,7 +168,7 @@ def test_get_job_returns_full_posting_detail() -> None:
         experience_required="5+ years",
         source_url="https://boards.example.com/jobs/1",
     )
-    client, _repository, _broker = _client(repository=FakeJobRepository(jobs=[job]))
+    client, _repository, _broker, _user_id = _client(repository=FakeJobRepository(jobs=[job]))
 
     response = client.get(f"/jobs/{job.id}")
 
@@ -169,7 +182,7 @@ def test_get_job_returns_full_posting_detail() -> None:
 
 
 def test_get_job_unknown_id_returns_404() -> None:
-    client, _repository, _broker = _client()
+    client, _repository, _broker, _user_id = _client()
 
     response = client.get(f"/jobs/{uuid4()}")
 

@@ -34,7 +34,6 @@ import {
   type TableColumn,
 } from '../../components'
 import { useOutreachList } from '../../api/outreach'
-import { useCurrentUserId } from '../../hooks/identity'
 import { pollAlways } from '../../hooks/usePolling'
 import { formatDateTime } from '../../utils/format'
 import { getChannelLabel } from './channelLabel'
@@ -51,23 +50,21 @@ function truncate(text: string, max = 72): string {
 }
 
 export function OutreachQueuePage() {
-  const { userId } = useCurrentUserId()
-  const activeUserId = userId ?? ''
   const [tab, setTab] = useState<QueueTab>('needs-review')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   // Both queries poll continuously — new drafts can be generated at any
   // time and this is the one page the product promises answers "what
   // needs my decision right now."
-  const pendingQuery = useOutreachList(activeUserId, 'PENDING_APPROVAL', {
+  const pendingQuery = useOutreachList('PENDING_APPROVAL', {
     refetchInterval: pollAlways(5000),
   })
-  const editedQuery = useOutreachList(activeUserId, 'EDITED', {
+  const editedQuery = useOutreachList('EDITED', {
     refetchInterval: pollAlways(5000),
   })
   // History: no interval — fetch-once + refetchOnWindowFocus (the hook's
   // default), matching async-workflows.md's "every other query" row.
-  const historyQuery = useOutreachList(activeUserId, undefined)
+  const historyQuery = useOutreachList(undefined)
 
   const needsReview = useMemo(() => {
     const combined = [...(pendingQuery.data ?? []), ...(editedQuery.data ?? [])]
@@ -174,9 +171,7 @@ export function OutreachQueuePage() {
             getRowKey={(row) => row.id}
             onRowClick={(row) => setSelectedId(row.id === selectedId ? null : row.id)}
           />
-          {selected ? (
-            <OutreachReviewPanel key={selected.id} outreach={selected} userId={activeUserId} />
-          ) : null}
+          {selected ? <OutreachReviewPanel key={selected.id} outreach={selected} /> : null}
         </div>
       )}
     </div>

@@ -1,7 +1,7 @@
 /**
  * The route table — see docs/frontend/routes.md's route table for the
  * documented final routes; this must not diverge from it. Every route
- * except `/welcome` sits behind `<RequireIdentity />`.
+ * except `/login` and `/register` sits behind `<RequireIdentity />`.
  *
  * Owner: frontend-shell-agent. Feature agents replace the placeholder
  * page components their route points at; they do not add or rename routes
@@ -14,7 +14,8 @@ import { Routes, Route } from 'react-router-dom'
 import { Layout } from './Layout'
 import { RequireIdentity } from './RequireIdentity'
 import { ErrorBoundary } from './ErrorBoundary'
-import { WelcomePage } from '../features/identity/WelcomePage'
+import { LoginPage } from '../features/identity/LoginPage'
+import { RegisterPage } from '../features/identity/RegisterPage'
 import { SettingsPage } from '../features/preferences/SettingsPage'
 import { ResumesPage } from '../features/resumes/ResumesPage'
 import { DashboardPage } from '../features/opportunities/DashboardPage'
@@ -30,7 +31,8 @@ function withBoundary(element: ReactNode) {
 export function AppRouter() {
   return (
     <Routes>
-      <Route path="/welcome" element={withBoundary(<WelcomePage />)} />
+      <Route path="/login" element={withBoundary(<LoginPage />)} />
+      <Route path="/register" element={withBoundary(<RegisterPage />)} />
 
       <Route element={<RequireIdentity />}>
         <Route element={<Layout />}>

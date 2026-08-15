@@ -84,7 +84,7 @@ class ProfileService:
         self._storage = storage
         self._llm_client = llm_client
 
-    async def upload_resume(self, request: CreateResumeRequest) -> Resume:
+    async def upload_resume(self, request: CreateResumeRequest, user_id: UserId) -> Resume:
         """`POST /resumes` — validate, store the file, and insert the
         `Resume` row at `status=PARSING` (per
         docs/architecture/component-contracts.md#post-resumes-upload:
@@ -97,7 +97,7 @@ class ProfileService:
         """
         logger.info(
             "Resume upload received | %s",
-            format_context(user_id=request.user_id, file_name=request.file_name),
+            format_context(user_id=user_id, file_name=request.file_name),
         )
 
         suffix = Path(request.file_name).suffix.lower()
@@ -139,13 +139,13 @@ class ProfileService:
 
         resume_id = ResumeId(uuid4())
         storage_uri = self._storage.save(
-            request.user_id, resume_id, request.file_name, file_content
+            user_id, resume_id, request.file_name, file_content
         )
         now = datetime.now(UTC)
         await self._resumes.add(
             Resume(
                 id=resume_id,
-                user_id=request.user_id,
+                user_id=user_id,
                 file_name=request.file_name,
                 storage_uri=storage_uri,
                 raw_text=None,
@@ -157,7 +157,7 @@ class ProfileService:
         assert resume is not None  # just inserted above
         logger.info(
             "Resume accepted for parsing | %s",
-            format_context(resume_id=resume_id, user_id=request.user_id, status=resume.status.value),
+            format_context(resume_id=resume_id, user_id=user_id, status=resume.status.value),
         )
         return resume
 

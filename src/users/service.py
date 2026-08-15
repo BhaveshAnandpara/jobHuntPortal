@@ -15,7 +15,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from infrastructure.auth import hash_password, verify_password
 from shared.errors.codes import ErrorCode
+from shared.types.api.auth import LoginRequest
 from shared.types.api.users import CreateUserRequest, UpdateUserPreferencesRequest
 from shared.types.domain.user import User
 from shared.types.domain.user_preferences import UserPreferences
@@ -65,6 +67,9 @@ class UserService:
         if await self._users.get_by_email(email) is not None:
             raise UserError(ErrorCode.VALIDATION_ERROR, "email is already registered")
 
+        if len(request.password) < 8:
+            raise UserError(ErrorCode.VALIDATION_ERROR, "password must be at least 8 characters")
+
         tz = request.timezone.strip() if request.timezone else None
 
         return await self._users.add(
@@ -74,8 +79,29 @@ class UserService:
                 display_name=display_name,
                 created_at=datetime.now(UTC),
                 timezone=tz or None,
-            )
+            ),
+            hash_password(request.password),
         )
+
+    async def login(self, request: LoginRequest) -> User:
+        """Verify email+password, returning the matching `User`.
+
+        Raises `UserError(UNAUTHORIZED, ...)` with the SAME message for a
+        nonexistent email and a wrong password — never reveal which one
+        failed (standard practice, and matches
+        `infrastructure.auth.errors.AuthError`'s reasoning for the same
+        failure class).
+        """
+        email = request.email.strip().lower()
+        found = await self._users.get_by_email_with_hash(email)
+        if found is None:
+            raise UserError(ErrorCode.UNAUTHORIZED, "invalid email or password")
+
+        user, password_hash = found
+        if not verify_password(request.password, password_hash):
+            raise UserError(ErrorCode.UNAUTHORIZED, "invalid email or password")
+
+        return user
 
     async def get_preferences(self, user_id: UserId) -> UserPreferences:
         preferences = await self._preferences.get(user_id)

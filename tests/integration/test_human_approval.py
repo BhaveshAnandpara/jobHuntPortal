@@ -88,7 +88,7 @@ def _ALL_CHANNELS():
 async def _drive_to_outreach_generated(harness: IntegrationHarness) -> tuple[str, str, str]:
     user = harness.create_user()
     harness.set_profiles_llm([llm_response(_PROFILE_FIELDS)])
-    harness.upload_resume(user["id"], "resume.txt", _RESUME_TEXT)
+    harness.upload_resume(user, "resume.txt", _RESUME_TEXT)
 
     harness.set_job_ingestion_fakes(
         pages={JOB_URL: _JOB_PAGE_TEXT},
@@ -103,10 +103,10 @@ async def _drive_to_outreach_generated(harness: IntegrationHarness) -> tuple[str
             )
         },
     )
-    job = harness.ingest_job(user["id"], JOB_URL)
+    job = harness.ingest_job(user, JOB_URL)
     job_id = job["id"]
 
-    harness.sync_matching_profiles(user["id"])
+    harness.sync_matching_profiles(user)
     harness.set_matching_preferences(FakeUserPreferencesClient({}))
     harness.set_matching_llm(
         MatchingFakeLLMClient(

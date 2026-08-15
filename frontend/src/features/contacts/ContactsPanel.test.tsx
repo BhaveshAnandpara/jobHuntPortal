@@ -17,7 +17,8 @@ import { API_BASE_URL } from '../../api/client'
 import { createTestQueryClient } from '../../api/test-utils'
 import type { ContactResponse } from '../../api/types'
 import { IdentityProvider } from '../../hooks/IdentityProvider'
-import { setCurrentUserId } from '../../hooks/identity'
+import { setToken } from '../../hooks/identity'
+import { mintTestToken } from '../../../tests/support/jwt'
 import { ContactsPanel, type ContactsPanelProps } from './ContactsPanel'
 
 function renderPanel(props: ContactsPanelProps) {
@@ -50,7 +51,7 @@ function contact(overrides: Partial<ContactResponse> = {}): ContactResponse {
 }
 
 beforeEach(() => {
-  setCurrentUserId('user-1')
+  setToken(mintTestToken('user-1'))
 })
 
 afterEach(() => {
@@ -189,7 +190,6 @@ describe('ContactsPanel — manual search trigger', () => {
 
     await waitFor(() =>
       expect(receivedBody).toEqual({
-        user_id: 'user-1',
         company: 'Acme Robotics',
         title: 'Senior Backend Engineer',
         location: 'Remote',

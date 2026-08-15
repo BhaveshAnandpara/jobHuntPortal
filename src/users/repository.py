@@ -57,11 +57,24 @@ class UserRepository:
         record = result.scalar_one_or_none()
         return _to_user(record) if record is not None else None
 
-    async def add(self, user: User) -> User:
+    async def get_by_email_with_hash(self, email: str) -> tuple[User, str] | None:
+        """Login-only lookup. `password_hash` is kept off the `User` domain
+        type everywhere else (defense in depth — general-purpose
+        `UserService` methods that return a `User` to callers must never be
+        able to leak a hash), so this is the one place it's read.
+        """
+        result = await self._session.execute(
+            select(UserRecord).where(UserRecord.email == email)
+        )
+        record = result.scalar_one_or_none()
+        return (_to_user(record), record.password_hash) if record is not None else None
+
+    async def add(self, user: User, password_hash: str) -> User:
         record = UserRecord(
             id=user.id,
             email=user.email,
             display_name=user.display_name,
+            password_hash=password_hash,
             created_at=user.created_at,
             timezone=user.timezone,
         )

@@ -80,7 +80,7 @@ async def test_event_chain_contract_shape_and_correlation(
 ) -> None:
     user = harness.create_user()
     harness.set_profiles_llm([llm_response(_PROFILE_FIELDS)])
-    harness.upload_resume(user["id"], "resume.txt", _RESUME_TEXT)
+    harness.upload_resume(user, "resume.txt", _RESUME_TEXT)
 
     harness.set_job_ingestion_fakes(
         pages={JOB_URL: _JOB_PAGE_TEXT},
@@ -95,10 +95,10 @@ async def test_event_chain_contract_shape_and_correlation(
             )
         },
     )
-    job = harness.ingest_job(user["id"], JOB_URL)
+    job = harness.ingest_job(user, JOB_URL)
     job_id = job["id"]
 
-    harness.sync_matching_profiles(user["id"])
+    harness.sync_matching_profiles(user)
     harness.set_matching_preferences(FakeUserPreferencesClient({}))
     harness.set_matching_llm(
         MatchingFakeLLMClient(

@@ -129,29 +129,120 @@ def extract_text(file_name: str, content: bytes) -> str:
 
 
 def _build_extraction_prompt(raw_text: str) -> str:
-    return (
-        "Read the resume text below and extract a structured professional "
-        "profile. The candidate may work in any profession — do not assume "
-        "software engineering or any other specific field. Infer:\n"
-        "- title: a short label for their professional identity\n"
-        "- summary: a 1-3 sentence professional summary, or null\n"
-        "- skills: their skills/tools/competencies, as free text, in the "
-        "vocabulary of their own field\n"
-        "- experience_years: total relevant experience in years, or null\n"
-        "- seniority: their level, in whatever vocabulary fits their field "
-        '(e.g. "Senior", "Entry", "Lead", "Principal"), or null\n'
-        "- education: a list of {institution, degree, field_of_study, "
-        "graduation_year} entries\n"
-        "- certifications: professional certifications, if any\n"
-        "- projects: short descriptions of notable projects or work, if "
-        "any\n"
-        "- industries: industries this profile fits, if inferable\n"
-        "- target_roles: roles this profile is suited for\n\n"
-        "Only extract what the text actually supports; use null or an "
-        "empty list rather than guessing.\n\n"
-        f"Resume text:\n{raw_text}"
-    )
+    return f"""
+    You are a strict resume information extraction system.
 
+    Extract ONE structured professional profile from the resume text below.
+
+    IMPORTANT RULES:
+
+    1. Use only information supported by the resume.
+    2. Do not guess or fabricate information.
+    3. The candidate may belong to ANY profession or industry.
+    4. Do not assume software engineering or technology.
+    5. If a scalar field cannot be determined, return null.
+    6. If a list field has no supported values, return [].
+    7. Preserve the candidate's own professional terminology where possible.
+    8. Read the ENTIRE resume before answering.
+
+    You must return exactly ONE object with these fields:
+
+    {{
+    "title": string | null,
+    "summary": string | null,
+    "skills": [string],
+    "experience_years": number | null,
+    "seniority": string | null,
+    "education": [
+        {{
+        "institution": string | null,
+        "degree": string | null,
+        "field_of_study": string | null,
+        "graduation_year": integer | null
+        }}
+    ],
+    "certifications": [string],
+    "projects": [string],
+    "industries": [string],
+    "target_roles": [string]
+    }}
+
+    FIELD RULES:
+
+    title
+    - A short professional identity supported by the resume.
+    - Prefer an explicitly stated current/recent role.
+    - If no professional identity can be established, return null.
+    - Do not use section names such as "Summary", "Experience", or "Skills".
+
+    summary
+    - A concise 1-3 sentence professional summary based only on the resume.
+    - Do not invent achievements or experience.
+    - Return null if there is not enough information.
+
+    skills
+    - Include actual skills, tools, technologies, methods, domain competencies,
+    or professional capabilities explicitly supported by the resume.
+    - Do not include company names, job titles, section headings, or education
+    institutions.
+    - Return [] if none are supported.
+
+    experience_years
+    - Return total relevant professional experience only when reasonably
+    supported by explicit employment dates/durations.
+    - Do not guess from graduation year.
+    - Do not count overlapping jobs twice.
+    - Return null when it cannot be determined reliably.
+
+    seniority
+    - Use a level supported by explicit roles or clearly supported experience.
+    - Examples: Entry, Junior, Mid-level, Senior, Lead, Principal, Manager.
+    - Do not infer "Senior" merely because the candidate has several skills.
+    - Return null if unclear.
+
+    education
+    - Extract education entries only.
+    - Do not treat certifications or work experience as education.
+    - Use null for missing fields within an education entry.
+
+    certifications
+    - Include only explicitly stated professional certifications.
+    - Return [] if none exist.
+
+    projects
+    - Include notable projects explicitly described in the resume.
+    - Keep each item concise.
+    - Return [] if none are present.
+
+    industries
+    - Include industries explicitly supported by the candidate's work,
+    education, or projects.
+    - Do not guess broad industries from individual tools.
+    - Return [] if unclear.
+
+    target_roles
+    - Include roles strongly supported by the candidate's existing experience,
+    skills, and resume positioning.
+    - Do not invent aspirational careers unrelated to the resume.
+    - Return [] if insufficient information exists.
+
+    CRITICAL OUTPUT RULES:
+
+    - Return ONLY the object itself.
+    - Do NOT wrap it inside "ExtractedResumeProfile".
+    - Do NOT wrap it inside "profile", "result", "data", or any other key.
+    - Do NOT return markdown.
+    - Do NOT return ```json.
+    - Do NOT return explanations.
+    - The top-level object MUST contain the field "title".
+    - Missing scalar values must be null.
+    - Missing list values must be [].
+
+    RESUME TEXT:
+    ----------------
+    {raw_text}
+    ----------------
+    """
 
 # LLMFailureReason values that mean "the model responded, but not with a
 # schema-conforming JSON object" — mapped to RESUME_PARSE_FAILED. Every other

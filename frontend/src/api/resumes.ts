@@ -11,8 +11,8 @@ import type { ResumeResponse, ResumeStatus } from './types'
 import { fileToBase64 } from '../utils/base64'
 import { pollUntil } from '../hooks/usePolling'
 
-export function listResumes(userId: string): Promise<ResumeResponse[]> {
-  return apiClient.get<ResumeResponse[]>(`/resumes?user_id=${userId}`)
+export function listResumes(): Promise<ResumeResponse[]> {
+  return apiClient.get<ResumeResponse[]>('/resumes')
 }
 
 /**
@@ -21,10 +21,9 @@ export function listResumes(userId: string): Promise<ResumeResponse[]> {
  * plain `File` (e.g. from an `<input type="file">`), never a pre-encoded
  * string, so this stays the single place that encoding happens.
  */
-export async function uploadResume(userId: string, file: File): Promise<ResumeResponse> {
+export async function uploadResume(file: File): Promise<ResumeResponse> {
   const fileContent = await fileToBase64(file)
   return apiClient.post<ResumeResponse>('/resumes', {
-    user_id: userId,
     file_name: file.name,
     file_content: fileContent,
   })
@@ -79,12 +78,11 @@ function allPendingResumesObserved(
  * callers tracking an in-flight upload (see `allPendingResumesObserved`
  * above for why); omitting it preserves the original list-only behavior.
  */
-export function useResumes(userId: string, options?: { pendingResumeIds?: ReadonlySet<string> }) {
+export function useResumes(options?: { pendingResumeIds?: ReadonlySet<string> }) {
   const pendingResumeIds = options?.pendingResumeIds
   return useQuery({
-    queryKey: queryKeys.resumes(userId),
-    queryFn: () => listResumes(userId),
-    enabled: Boolean(userId),
+    queryKey: queryKeys.resumes(),
+    queryFn: () => listResumes(),
     refetchInterval: pollUntil(
       2000,
       (resumes) => allResumesTerminal(resumes) && allPendingResumesObserved(resumes, pendingResumeIds),
@@ -95,26 +93,21 @@ export function useResumes(userId: string, options?: { pendingResumeIds?: Readon
 export function useUploadResume() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ userId, file }: { userId: string; file: File }) => uploadResume(userId, file),
-    onSuccess: (_data, variables) => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.resumes(variables.userId) })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.profiles(variables.userId) })
+    mutationFn: (file: File) => uploadResume(file),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.resumes() })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.profiles() })
     },
   })
 }
 
-/**
- * `deleteResume` only needs `resumeId` on the wire, but invalidation needs
- * `userId` to build the scoped `resumes`/`profiles` keys — callers (which
- * already have the active user in context) supply both.
- */
 export function useDeleteResume() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ resumeId }: { resumeId: string; userId: string }) => deleteResume(resumeId),
-    onSuccess: (_data, variables) => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.resumes(variables.userId) })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.profiles(variables.userId) })
+    mutationFn: ({ resumeId }: { resumeId: string }) => deleteResume(resumeId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.resumes() })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.profiles() })
     },
   })
 }

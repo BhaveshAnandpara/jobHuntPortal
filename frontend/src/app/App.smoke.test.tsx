@@ -9,26 +9,27 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { App } from './App'
-import { setCurrentUserId } from '../hooks/identity'
+import { setToken } from '../hooks/identity'
+import { mintTestToken } from '../../tests/support/jwt'
 
 describe('App', () => {
   // `App` mounts a real `BrowserRouter`, which reads/writes the jsdom
   // `window.location` — that location persists across tests within this
-  // file (e.g. the redirect-to-/welcome test below leaves the URL at
-  // /welcome), so each test must start from a known path itself rather
+  // file (e.g. the redirect-to-/login test below leaves the URL at
+  // /login), so each test must start from a known path itself rather
   // than relying on the previous test's end state.
   beforeEach(() => {
     window.history.pushState({}, '', '/')
   })
 
-  it('renders without an identity and redirects to /welcome', () => {
+  it('renders without a token and redirects to /login', () => {
     render(<App />)
 
-    expect(screen.getByText('Welcome')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Log in' })).toBeInTheDocument()
   })
 
-  it('renders the app shell and the dashboard route once an identity exists', () => {
-    setCurrentUserId('user-123')
+  it('renders the app shell and the dashboard route once a token exists', () => {
+    setToken(mintTestToken('user-123'))
     render(<App />)
 
     // The route resolved through <RequireIdentity> + <Layout> to the
@@ -44,7 +45,7 @@ describe('App', () => {
   })
 
   it('exposes a mobile navigation toggle that opens the nav menu', async () => {
-    setCurrentUserId('user-123')
+    setToken(mintTestToken('user-123'))
     render(<App />)
 
     const toggle = screen.getByRole('button', { name: /open navigation menu/i })

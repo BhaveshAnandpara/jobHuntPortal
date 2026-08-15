@@ -33,11 +33,10 @@ describe('tracking.ts functions', () => {
       }),
     )
 
-    await listApplications('user-1')
-    expect(lastUrl).toContain('user_id=user-1')
+    await listApplications()
     expect(lastUrl).not.toContain('status=')
 
-    await listApplications('user-1', 'SHORTLISTED')
+    await listApplications('SHORTLISTED')
     expect(lastUrl).toContain('status=SHORTLISTED')
   })
 
@@ -92,7 +91,7 @@ describe('tracking.ts functions', () => {
   it('propagates a network failure as ApiError', async () => {
     server.use(http.get(`${API_BASE_URL}/applications`, () => HttpResponse.error()))
 
-    const error = await listApplications('user-1').catch((e: unknown) => e)
+    const error = await listApplications().catch((e: unknown) => e)
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).code).toBe('NETWORK_ERROR')
@@ -100,11 +99,8 @@ describe('tracking.ts functions', () => {
 })
 
 describe('tracking.ts hooks', () => {
-  it('useApplications resolves and does not fire when userId is empty', async () => {
-    const { result: empty } = renderHook(() => useApplications(''), { wrapper: createWrapper() })
-    expect(empty.current.fetchStatus).toBe('idle')
-
-    const { result } = renderHook(() => useApplications('user-1'), { wrapper: createWrapper() })
+  it('useApplications resolves the list', async () => {
+    const { result } = renderHook(() => useApplications(), { wrapper: createWrapper() })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(result.current.data).toHaveLength(1)
   })
@@ -119,7 +115,7 @@ describe('tracking.ts hooks', () => {
       }),
     )
 
-    const { result } = renderHook(() => useApplications('user-1', undefined, { refetchInterval: 5000 }), {
+    const { result } = renderHook(() => useApplications(undefined, { refetchInterval: 5000 }), {
       wrapper: createWrapper(),
     })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
@@ -141,7 +137,7 @@ describe('tracking.ts hooks', () => {
       }),
     )
 
-    const { result } = renderHook(() => useApplications('user-1'), { wrapper: createWrapper() })
+    const { result } = renderHook(() => useApplications(), { wrapper: createWrapper() })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(callCount).toBe(1)
 
@@ -166,7 +162,7 @@ describe('tracking.ts hooks', () => {
     expect(result.current.data).toHaveLength(1)
   })
 
-  it('useUpdateApplicationStatus invalidates application, applications(userId), and history on success', async () => {
+  it('useUpdateApplicationStatus invalidates application, applications(), and history on success', async () => {
     let applicationCalls = 0
     let applicationsCalls = 0
     let historyCalls = 0
@@ -199,7 +195,7 @@ describe('tracking.ts hooks', () => {
     )
     const wrapper = createWrapper()
     const { result: appResult } = renderHook(() => useApplication('app-1'), { wrapper })
-    const { result: appsResult } = renderHook(() => useApplications('user-1'), { wrapper })
+    const { result: appsResult } = renderHook(() => useApplications(), { wrapper })
     const { result: historyResult } = renderHook(() => useApplicationHistory('app-1'), { wrapper })
     await waitFor(() => expect(appResult.current.isSuccess).toBe(true))
     await waitFor(() => expect(appsResult.current.isSuccess).toBe(true))
@@ -211,7 +207,6 @@ describe('tracking.ts hooks', () => {
     const { result: updateResult } = renderHook(() => useUpdateApplicationStatus(), { wrapper })
     updateResult.current.mutate({
       applicationId: 'app-1',
-      userId: 'user-1',
       body: { new_status: 'APPLIED', applied_date: null, notes: null },
     })
 
@@ -234,7 +229,6 @@ describe('tracking.ts hooks', () => {
 
     result.current.mutate({
       applicationId: 'app-1',
-      userId: 'user-1',
       body: { new_status: 'OFFER', applied_date: null, notes: null },
     })
 

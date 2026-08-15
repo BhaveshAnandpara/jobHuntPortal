@@ -22,7 +22,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ExternalLink, Search } from 'lucide-react'
 import { Button, Card, EmptyState, ErrorState, Skeleton, Spinner, StatusBadge } from '../../components'
-import { useCurrentUserId } from '../../hooks/identity'
 import { pollAlways } from '../../hooks/usePolling'
 import { listContacts, useContacts, useTriggerContactSearch } from '../../api/contacts'
 import { queryKeys } from '../../api/queryKeys'
@@ -61,7 +60,6 @@ export type ContactsPanelProps = {
 }
 
 export function ContactsPanel({ jobId, company, title, location }: ContactsPanelProps) {
-  const { userId } = useCurrentUserId()
   const contactsQuery = useContacts(jobId)
   const triggerSearch = useTriggerContactSearch()
   const [isSearching, setIsSearching] = useState(false)
@@ -90,12 +88,12 @@ export function ContactsPanel({ jobId, company, title, location }: ContactsPanel
     return () => clearTimeout(timeout)
   }, [isSearching])
 
-  const canSearch = Boolean(userId && company && title)
+  const canSearch = Boolean(company && title)
 
   function handleSearchAgain() {
-    if (!userId || !company || !title) return
+    if (!company || !title) return
     triggerSearch.mutate(
-      { jobId, body: { user_id: userId, company, title, location: location ?? null } },
+      { jobId, body: { company, title, location: location ?? null } },
       { onSuccess: () => setIsSearching(true) },
     )
   }

@@ -17,9 +17,10 @@
  */
 
 import { useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
-import { Briefcase, FileText, LayoutDashboard, Menu, Send, Settings } from 'lucide-react'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { Briefcase, FileText, LayoutDashboard, LogOut, Menu, Send, Settings } from 'lucide-react'
 import { Dialog } from '../components'
+import { useCurrentUserId } from '../hooks/identity'
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -55,6 +56,25 @@ function NavLinkList({ onNavigate }: { onNavigate?: () => void }) {
   )
 }
 
+function LogoutButton() {
+  const { clearToken } = useCurrentUserId()
+  const navigate = useNavigate()
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        clearToken()
+        navigate('/login', { replace: true })
+      }}
+      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100"
+    >
+      <LogOut className="h-4 w-4" aria-hidden />
+      Log out
+    </button>
+  )
+}
+
 export function Layout() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
@@ -75,12 +95,18 @@ export function Layout() {
 
       <Dialog open={mobileNavOpen} onOpenChange={setMobileNavOpen} title="Menu">
         <NavLinkList onNavigate={() => setMobileNavOpen(false)} />
+        <div className="mt-4 border-t border-gray-200 pt-4">
+          <LogoutButton />
+        </div>
       </Dialog>
 
       <div className="mx-auto flex max-w-6xl">
-        <nav className="sticky top-0 hidden h-screen w-56 shrink-0 border-r border-gray-200 bg-white px-3 py-6 md:block">
+        <nav className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-gray-200 bg-white px-3 py-6 md:flex">
           <p className="px-3 pb-6 text-sm font-semibold text-gray-900">Career Platform</p>
           <NavLinkList />
+          <div className="mt-auto border-t border-gray-200 pt-4">
+            <LogoutButton />
+          </div>
         </nav>
         <main className="min-w-0 flex-1 px-6 py-8 md:px-10">
           <Outlet />

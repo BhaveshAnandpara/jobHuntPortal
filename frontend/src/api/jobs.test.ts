@@ -14,7 +14,7 @@ import { createWrapper } from './test-utils'
 
 describe('jobs.ts functions', () => {
   it('ingestJobUrl posts and resolves the created JobResponse (202)', async () => {
-    const result = await ingestJobUrl({ user_id: 'user-1', url: 'https://boards.example.com/jobs/1' })
+    const result = await ingestJobUrl({ url: 'https://boards.example.com/jobs/1' })
     expect(result.company).toBe('Acme Robotics')
   })
 
@@ -25,7 +25,7 @@ describe('jobs.ts functions', () => {
       ),
     )
 
-    const error = await ingestJobUrl({ user_id: 'user-1', url: 'not-a-url' }).catch((e: unknown) => e)
+    const error = await ingestJobUrl({ url: 'not-a-url' }).catch((e: unknown) => e)
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).code).toBe('INVALID_JOB_URL')
@@ -80,12 +80,12 @@ describe('jobs.ts hooks', () => {
       }),
     )
     const wrapper = createWrapper()
-    const { result: appsResult } = renderHook(() => useApplications('user-1'), { wrapper })
+    const { result: appsResult } = renderHook(() => useApplications(), { wrapper })
     await waitFor(() => expect(appsResult.current.isSuccess).toBe(true))
     expect(applicationsCalls).toBe(1)
 
     const { result: ingestResult } = renderHook(() => useIngestJobUrl(), { wrapper })
-    ingestResult.current.mutate({ user_id: 'user-1', url: 'https://boards.example.com/jobs/1' })
+    ingestResult.current.mutate({ url: 'https://boards.example.com/jobs/1' })
 
     await waitFor(() => expect(ingestResult.current.isSuccess).toBe(true))
     await waitFor(() => expect(applicationsCalls).toBe(2))
@@ -100,12 +100,12 @@ describe('jobs.ts hooks', () => {
       }),
     )
     const wrapper = createWrapper()
-    const { result: appsResult } = renderHook(() => useApplications('user-1', 'SHORTLISTED'), { wrapper })
+    const { result: appsResult } = renderHook(() => useApplications('SHORTLISTED'), { wrapper })
     await waitFor(() => expect(appsResult.current.isSuccess).toBe(true))
     expect(applicationsCalls).toBe(1)
 
     const { result: ingestResult } = renderHook(() => useIngestJobUrl(), { wrapper })
-    ingestResult.current.mutate({ user_id: 'user-1', url: 'https://boards.example.com/jobs/2' })
+    ingestResult.current.mutate({ url: 'https://boards.example.com/jobs/2' })
 
     await waitFor(() => expect(ingestResult.current.isSuccess).toBe(true))
     await waitFor(() => expect(applicationsCalls).toBe(2))

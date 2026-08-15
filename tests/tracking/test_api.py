@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import tracking.events as events_module
+from infrastructure.auth.dependencies import get_current_user_id
 from infrastructure.kafka.in_memory import InMemoryBroker, InMemoryProducerClient
 from infrastructure.kafka.producer import EventProducer
 from infrastructure.kafka.serialization import deserialize
@@ -55,7 +56,9 @@ def _application(**overrides: object) -> Application:
     return Application(**fields)
 
 
-def _client(session_factory: async_sessionmaker[AsyncSession]) -> TestClient:
+def _client(
+    session_factory: async_sessionmaker[AsyncSession], *, user_id: UserId | None = None
+) -> TestClient:
     app = FastAPI()
     app.include_router(router)
 
@@ -65,6 +68,7 @@ def _client(session_factory: async_sessionmaker[AsyncSession]) -> TestClient:
             await session.commit()
 
     app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_current_user_id] = lambda: user_id or UserId(uuid4())
     return TestClient(app)
 
 
@@ -127,16 +131,14 @@ async def test_list_applications_filters_by_user_and_status(
     await _seed(session_factory, discovered)
     await _seed(session_factory, matched)
     await _seed(session_factory, other_user)
-    client = _client(session_factory)
+    client = _client(session_factory, user_id=user_id)
 
-    response = client.get("/applications", params={"user_id": str(user_id)})
+    response = client.get("/applications")
     assert response.status_code == 200
     ids = {row["id"] for row in response.json()}
     assert ids == {str(discovered.id), str(matched.id)}
 
-    response = client.get(
-        "/applications", params={"user_id": str(user_id), "status": "MATCHED"}
-    )
+    response = client.get("/applications", params={"status": "MATCHED"})
     assert response.status_code == 200
     ids = {row["id"] for row in response.json()}
     assert ids == {str(matched.id)}

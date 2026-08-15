@@ -258,13 +258,24 @@ class IntegrationHarness:
 
     # -- Users / Profiles convenience -------------------------------------------------
 
-    def create_user(self, *, email: str | None = None, display_name: str = "Test User"):
+    def create_user(
+        self, *, email: str | None = None, display_name: str = "Test User", password: str = "test-password-123"
+    ):
+        """Returns the flat user dict (`id`, `email`, ...) plus
+        `access_token`, so existing callers reading `user["id"]` are
+        unaffected while callers that need to act as this user (once a
+        service's routes require a bearer token) can use
+        `user["access_token"]`."""
         email = email or f"{uuid4()}@example.com"
         response = self.client.post(
-            "/users", json={"email": email, "display_name": display_name}
+            "/users", json={"email": email, "display_name": display_name, "password": password}
         )
         assert response.status_code == 201, response.text
-        return response.json()
+        body = response.json()
+        return {**body["user"], "access_token": body["access_token"]}
+
+    def auth_headers(self, user: dict) -> dict[str, str]:
+        return {"Authorization": f"Bearer {user['access_token']}"}
 
     def set_profiles_llm(self, script: list) -> ScriptedLLMProvider:
         """Wire Resume/Profile Service's parsing LLM to a fresh
@@ -277,22 +288,22 @@ class IntegrationHarness:
         self._llm_holder["client"] = llm_client
         return provider
 
-    def upload_resume(self, user_id: str, file_name: str, text: str) -> dict:
+    def upload_resume(self, user: dict, file_name: str, text: str) -> dict:
         import base64
 
         response = self.client.post(
             "/resumes",
             json={
-                "user_id": user_id,
                 "file_name": file_name,
                 "file_content": base64.b64encode(text.encode("utf-8")).decode("ascii"),
             },
+            headers=self.auth_headers(user),
         )
         assert response.status_code == 202, response.text
         return response.json()
 
-    def list_profiles(self, user_id: str) -> list[dict]:
-        response = self.client.get("/profiles", params={"user_id": user_id})
+    def list_profiles(self, user: dict) -> list[dict]:
+        response = self.client.get("/profiles", headers=self.auth_headers(user))
         assert response.status_code == 200, response.text
         return response.json()
 
@@ -313,18 +324,21 @@ class IntegrationHarness:
         self.app.dependency_overrides[jobs_get_page_fetcher] = lambda: fetcher
         self.app.dependency_overrides[jobs_get_structured_extractor] = lambda: extractor
 
-    def ingest_job(self, user_id: str, url: str) -> dict:
+    def ingest_job(self, user: dict, url: str) -> dict:
+        """`user` is the dict `create_user()` returns (needs `access_token`,
+        not just `id` — identity is token-derived now, not a request field).
+        """
         response = self.client.post(
-            "/jobs/ingest-url", json={"user_id": user_id, "url": url}
+            "/jobs/ingest-url", json={"url": url}, headers=self.auth_headers(user)
         )
         assert response.status_code == 202, response.text
         return response.json()
 
     # -- Matching workflow fakes ----------------------------------------------
 
-    def sync_matching_profiles(self, user_id: str) -> MatchingFakeProfileServiceClient:
+    def sync_matching_profiles(self, user: dict) -> MatchingFakeProfileServiceClient:
         """Build a `FakeProfileServiceClient` from the *real* `GET /profiles`
-        API response for `user_id`, and wire it into
+        API response for `user`, and wire it into
         `workflows.langgraph.job_matching.nodes`. Keeps the matching
         workflow's profile input consistent with what Resume/Profile
         Service's real API+DB actually produced, per this component's own
@@ -335,8 +349,8 @@ class IntegrationHarness:
         from shared.types.dto import ResumeProfile
         from shared.types.ids import UserId
 
-        profiles = [ResumeProfile(**item) for item in self.list_profiles(user_id)]
-        fake = MatchingFakeProfileServiceClient({UserId(UUID(user_id)): profiles})
+        profiles = [ResumeProfile(**item) for item in self.list_profiles(user)]
+        fake = MatchingFakeProfileServiceClient({UserId(UUID(user["id"])): profiles})
         matching_nodes.set_profile_service_client(fake)
         return fake
 

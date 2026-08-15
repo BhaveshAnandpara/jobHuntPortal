@@ -38,7 +38,7 @@ function renderPanel(outreach: OutreachResponse, applicationId?: string) {
   })
   return render(
     <QueryClientProvider client={queryClient}>
-      <OutreachReviewPanel outreach={outreach} userId="user-1" applicationId={applicationId} />
+      <OutreachReviewPanel outreach={outreach} applicationId={applicationId} />
     </QueryClientProvider>,
   )
 }
@@ -219,7 +219,7 @@ describe('OutreachReviewPanel', () => {
     })
     const { rerender } = render(
       <QueryClientProvider client={queryClient}>
-        <OutreachReviewPanel outreach={makeOutreach()} userId="user-1" />
+        <OutreachReviewPanel outreach={makeOutreach()} />
       </QueryClientProvider>,
     )
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }))
@@ -235,7 +235,6 @@ describe('OutreachReviewPanel', () => {
       <QueryClientProvider client={queryClient}>
         <OutreachReviewPanel
           outreach={makeOutreach({ status: 'APPROVED', decided_at: '2026-01-02T00:00:00Z' })}
-          userId="user-1"
         />
       </QueryClientProvider>,
     )
@@ -255,7 +254,7 @@ describe('OutreachReviewPanel', () => {
     })
     const { rerender } = render(
       <QueryClientProvider client={queryClient}>
-        <OutreachReviewPanel outreach={makeOutreach({ id: 'outreach-1' })} userId="user-1" />
+        <OutreachReviewPanel outreach={makeOutreach({ id: 'outreach-1' })} />
       </QueryClientProvider>,
     )
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }))
@@ -263,7 +262,7 @@ describe('OutreachReviewPanel', () => {
 
     rerender(
       <QueryClientProvider client={queryClient}>
-        <OutreachReviewPanel outreach={makeOutreach({ id: 'outreach-2' })} userId="user-1" />
+        <OutreachReviewPanel outreach={makeOutreach({ id: 'outreach-2' })} />
       </QueryClientProvider>,
     )
 

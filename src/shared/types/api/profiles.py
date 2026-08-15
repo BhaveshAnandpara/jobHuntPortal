@@ -15,7 +15,6 @@ from shared.types.ids import ResumeId, UserId
 
 
 class CreateResumeRequest(BaseModel):
-    user_id: UserId
     file_name: str
     # Wire format is a base64 string inside the JSON body (per
     # docs/frontend/api-mapping.md's already-documented contract), not raw

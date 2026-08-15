@@ -9,8 +9,8 @@ import { apiClient } from './client'
 import { queryKeys } from './queryKeys'
 import type { ResumeProfile } from './types'
 
-export function listProfiles(userId: string): Promise<ResumeProfile[]> {
-  return apiClient.get<ResumeProfile[]>(`/profiles?user_id=${userId}`)
+export function listProfiles(): Promise<ResumeProfile[]> {
+  return apiClient.get<ResumeProfile[]>('/profiles')
 }
 
 export function getProfile(profileId: string): Promise<ResumeProfile> {
@@ -18,11 +18,10 @@ export function getProfile(profileId: string): Promise<ResumeProfile> {
 }
 
 /** Fetch-once + `refetchOnWindowFocus` — reacts to resume upload/delete invalidation, not polling. */
-export function useProfiles(userId: string) {
+export function useProfiles() {
   return useQuery({
-    queryKey: queryKeys.profiles(userId),
-    queryFn: () => listProfiles(userId),
-    enabled: Boolean(userId),
+    queryKey: queryKeys.profiles(),
+    queryFn: () => listProfiles(),
   })
 }
 

@@ -33,7 +33,6 @@ import {
   Table,
   type TableColumn,
 } from '../../components'
-import { useCurrentUserId } from '../../hooks/identity'
 import { useApplications } from '../../api/tracking'
 import { pollAlways } from '../../hooks/usePolling'
 import { toApiError } from '../../api/client'
@@ -47,12 +46,11 @@ type SubmittedJobState = {
 }
 
 export function OpportunitiesPage() {
-  const { userId } = useCurrentUserId()
   const navigate = useNavigate()
   const location = useLocation()
   const [tab, setTab] = useState<StatusTab>('active')
 
-  const applications = useApplications(userId ?? '', undefined, {
+  const applications = useApplications(undefined, {
     refetchInterval: pollAlways(5000),
   })
 

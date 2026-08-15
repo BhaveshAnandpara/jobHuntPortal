@@ -86,9 +86,9 @@ async def test_full_job_flow_end_to_end(harness: IntegrationHarness) -> None:
     # 1. User + resume upload -> profile generated -----------------------------
     user = harness.create_user()
     harness.set_profiles_llm([llm_response(_EXTRACTED_PROFILE_FIELDS)])
-    resume = harness.upload_resume(user["id"], "resume.txt", _RESUME_TEXT)
+    resume = harness.upload_resume(user, "resume.txt", _RESUME_TEXT)
 
-    profiles = harness.list_profiles(user["id"])
+    profiles = harness.list_profiles(user)
     assert len(profiles) == 1
     assert profiles[0]["title"] == "Senior Mechanical Design Engineer"
 
@@ -97,7 +97,7 @@ async def test_full_job_flow_end_to_end(harness: IntegrationHarness) -> None:
         pages={JOB_URL: _JOB_PAGE_TEXT},
         extractor_by_content={_JOB_PAGE_TEXT: _extracted_job_fields()},
     )
-    job = harness.ingest_job(user["id"], JOB_URL)
+    job = harness.ingest_job(user, JOB_URL)
     assert job["processing_status"] == "NORMALIZED"
     job_id = job["id"]
 
@@ -107,7 +107,7 @@ async def test_full_job_flow_end_to_end(harness: IntegrationHarness) -> None:
     correlation_id = discovered[0].correlation_id
 
     # 3. Wire matching's profile/preferences/LLM fakes ---------------------------
-    harness.sync_matching_profiles(user["id"])
+    harness.sync_matching_profiles(user)
     harness.set_matching_preferences(FakeUserPreferencesClient({}))
     harness.set_matching_llm(
         MatchingFakeLLMClient(
@@ -235,7 +235,7 @@ async def test_full_job_flow_end_to_end(harness: IntegrationHarness) -> None:
 
     # 8. Tracking reflects the full lifecycle -------------------------------------
     applications = harness.client.get(
-        "/applications", params={"user_id": user["id"]}
+        "/applications", headers=harness.auth_headers(user)
     ).json()
     assert len(applications) == 1
     application_id = applications[0]["id"]

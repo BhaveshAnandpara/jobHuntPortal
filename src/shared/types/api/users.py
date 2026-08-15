@@ -13,6 +13,7 @@ from shared.types.ids import UserId, UserPreferencesId
 class CreateUserRequest(BaseModel):
     email: str
     display_name: str
+    password: str
     timezone: str | None = None
 
 
@@ -46,7 +47,7 @@ class UpdateUserPreferencesRequest(BaseModel):
 
 __all__ = [
     "CreateUserRequest",
-    "UserResponse",
-    "UserPreferencesResponse",
     "UpdateUserPreferencesRequest",
+    "UserPreferencesResponse",
+    "UserResponse",
 ]

@@ -28,13 +28,11 @@
 import { Link, useParams } from 'react-router-dom'
 import { ErrorState, PageHeader, Skeleton } from '../../components'
 import { useOutreachItem } from '../../api/outreach'
-import { useCurrentUserId } from '../../hooks/identity'
 import { toApiError } from '../../api/client'
 import { OutreachReviewPanel } from './OutreachReviewPanel'
 
 export function OutreachReviewPage() {
   const { outreachId } = useParams<{ outreachId: string }>()
-  const { userId } = useCurrentUserId()
   const query = useOutreachItem(outreachId ?? '')
 
   const apiError = query.error ? toApiError(query.error) : null
@@ -59,8 +57,8 @@ export function OutreachReviewPage() {
           }
           onRetry={() => void query.refetch()}
         />
-      ) : query.data && userId ? (
-        <OutreachReviewPanel outreach={query.data} userId={userId} />
+      ) : query.data ? (
+        <OutreachReviewPanel outreach={query.data} />
       ) : null}
 
       <p className="mt-4 text-xs text-gray-500">

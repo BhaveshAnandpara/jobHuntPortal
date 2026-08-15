@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import outreach.events as events_module
+from infrastructure.auth.dependencies import get_current_user_id
 from infrastructure.kafka.in_memory import InMemoryBroker, InMemoryProducerClient
 from infrastructure.kafka.producer import EventProducer
 from infrastructure.kafka.serialization import deserialize
@@ -46,7 +47,9 @@ def _outreach(**overrides: object) -> Outreach:
     return Outreach(**fields)
 
 
-def _client(session_factory=None, broker: InMemoryBroker | None = None) -> TestClient:
+def _client(
+    session_factory=None, broker: InMemoryBroker | None = None, user_id: UserId | None = None
+) -> TestClient:
     app = FastAPI()
     app.include_router(router)
 
@@ -56,6 +59,7 @@ def _client(session_factory=None, broker: InMemoryBroker | None = None) -> TestC
             await session.commit()
 
     app.dependency_overrides[get_session] = fake_session
+    app.dependency_overrides[get_current_user_id] = lambda: user_id or UserId(uuid4())
     # outreach.api.routes.approve_outreach calls outreach.events
     # .publish_outreach_approved directly (a module-level singleton), not
     # a FastAPI-injected dependency — there is no `get_event_producer`
@@ -106,15 +110,13 @@ async def test_list_outreach_filters_by_user_and_status(session_factory) -> None
     await _seed(session_factory, pending)
     await _seed(session_factory, approved)
     await _seed(session_factory, other_user)
-    client = _client(session_factory)
+    client = _client(session_factory, user_id=user_id)
 
-    response = client.get("/outreach", params={"user_id": str(user_id)})
+    response = client.get("/outreach")
     assert response.status_code == 200
     assert {row["id"] for row in response.json()} == {str(pending.id), str(approved.id)}
 
-    filtered = client.get(
-        "/outreach", params={"user_id": str(user_id), "status": "PENDING_APPROVAL"}
-    )
+    filtered = client.get("/outreach", params={"status": "PENDING_APPROVAL"})
     assert filtered.status_code == 200
     assert [row["id"] for row in filtered.json()] == [str(pending.id)]
 

@@ -98,6 +98,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -118,6 +119,17 @@ _SRC = _REPO_ROOT / "src"
 for _path in (str(_REPO_ROOT), str(_SRC)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
+
+# Deterministic, e2e-only JWT secret — this process never shares state with
+# a real deployment, so a fixed value is fine (never the same value used
+# anywhere real). Set before any `infrastructure.auth` call reads it (that
+# module resolves the env var lazily, per-call, but setting it once up front
+# here avoids ever depending on import order). The real frontend, driven by
+# Playwright, authenticates exactly like a real browser would (register/
+# login through the actual UI) — this only covers the "Live" clients below,
+# which make privileged server-to-server calls with no browser session of
+# their own to inherit a token from.
+os.environ.setdefault("JWT_SECRET_KEY", "e2e-test-only-secret-do-not-use-in-prod")
 
 import contacts.consumers as contacts_consumers
 import contacts.db as contacts_db
@@ -143,6 +155,7 @@ import workflows.langgraph.job_matching.nodes as matching_nodes
 import workflows.langgraph.outreach_generation.nodes as outreach_nodes
 from api.main import app as fastapi_app
 from contacts.api.dependencies import get_session as contacts_get_session
+from infrastructure.auth import create_access_token
 from infrastructure.database import Base
 from infrastructure.external.errors import PeopleSearchRequestError
 from infrastructure.external.people_search import PersonSearchHit
@@ -169,18 +182,18 @@ from shared.types.api.matching import JobMatchResponse
 from shared.types.domain.user_preferences import UserPreferences
 from shared.types.dto import ResumeProfile
 from shared.types.enums import ContactType
-from tracking.api.dependencies import get_session as tracking_get_session
-from users.api.dependencies import get_session as users_get_session
 
 # Reused fakes/helpers from the backend's own pytest suite (importing, not
 # modifying — see this file's header).
 from tests.contacts.conftest import FakeLLMClient as ContactsFakeLLMClient
-from tests.jobs.conftest import FakeExtractor, FakePageFetcher, make_extracted_fields
-from tests.outreach.conftest import FakeLLMClient as OutreachFakeLLMClient
-from tests.integration.conftest import (  # noqa: E402
+from tests.integration.conftest import (
     CHAIN_ORDER,
     drain_chain,
 )
+from tests.jobs.conftest import FakeExtractor, FakePageFetcher, make_extracted_fields
+from tests.outreach.conftest import FakeLLMClient as OutreachFakeLLMClient
+from tracking.api.dependencies import get_session as tracking_get_session
+from users.api.dependencies import get_session as users_get_session
 from workflows.langgraph.contact_discovery.discovery import (
     ContactClassificationBatch,
     ContactSearchPlan,
@@ -657,6 +670,17 @@ OUTREACH_LLM = OutreachFakeLLMClient(
 # ---------------------------------------------------------------------------
 
 
+def _auth_headers(user_id) -> dict[str, str]:
+    """`/profiles` and `/users/me/preferences` now derive identity from a
+    bearer token rather than a client-supplied `user_id` (see
+    `infrastructure.auth`). These "Live" clients are privileged
+    server-to-server code (a Kafka consumer, not a real browser request),
+    so they mint their own token for whichever `user_id` they're acting on
+    behalf of, the same way a trusted backend-to-backend caller would.
+    """
+    return {"Authorization": f"Bearer {create_access_token(user_id)}"}
+
+
 class LiveProfileServiceClient:
     """Matching's `ProfileServiceClient` shape: `list_profiles(user_id)`."""
 
@@ -664,7 +688,7 @@ class LiveProfileServiceClient:
         self._http = http
 
     async def list_profiles(self, user_id) -> list[ResumeProfile]:
-        response = await self._http.get("/profiles", params={"user_id": str(user_id)})
+        response = await self._http.get("/profiles", headers=_auth_headers(user_id))
         response.raise_for_status()
         return [ResumeProfile(**item) for item in response.json()]
 
@@ -674,7 +698,7 @@ class LiveUserPreferencesClient:
         self._http = http
 
     async def get_preferences(self, user_id) -> UserPreferences | None:
-        response = await self._http.get(f"/users/{user_id}/preferences")
+        response = await self._http.get("/users/me/preferences", headers=_auth_headers(user_id))
         if response.status_code == 404:
             return None
         response.raise_for_status()

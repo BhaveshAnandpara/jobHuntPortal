@@ -4,6 +4,8 @@ schema_instructions, extract_json_object, parse_structured, repair_prompt.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from infrastructure.llm.errors import LLMFailureReason, LLMProviderError
@@ -106,6 +108,87 @@ def test_parse_structured_leaves_populated_list_field_untouched():
         model="llama3.2:1b",
     )
     assert result.tags == ["a", "b"]
+
+
+def test_parse_structured_unwraps_schema_name_wrapper():
+    """A small model sometimes wraps its answer in the schema's own class
+    name instead of returning the bare object — see structured.py's
+    `_unwrap_schema_wrapper`."""
+    result = parse_structured(
+        '{"Widget": {"name": "gizmo", "count": 3}}',
+        Widget,
+        provider="fake",
+        model="llama3.2:1b",
+    )
+    assert result == Widget(name="gizmo", count=3)
+
+
+@pytest.mark.parametrize("wrapper_key", ["profile", "result", "data", "response"])
+def test_parse_structured_unwraps_common_wrapper_keys(wrapper_key: str):
+    result = parse_structured(
+        f'{{"{wrapper_key}": {{"name": "gizmo", "count": 3}}}}',
+        Widget,
+        provider="fake",
+        model="llama3.2:1b",
+    )
+    assert result == Widget(name="gizmo", count=3)
+
+
+def test_parse_structured_does_not_unwrap_when_outer_key_is_a_real_field():
+    """A single-key object whose key is itself a valid schema field (e.g. a
+    schema with exactly one field) must be validated as-is, not treated as
+    a wrapper."""
+    with pytest.raises(LLMProviderError) as excinfo:
+        parse_structured(
+            '{"name": {"count": 3}}', Widget, provider="fake", model="llama3"
+        )
+    assert excinfo.value.reason == LLMFailureReason.SCHEMA_VALIDATION_FAILED
+
+
+def test_parse_structured_does_not_unwrap_when_inner_dict_shares_no_fields():
+    """A single-key object whose nested dict shares no field names with the
+    schema is not a recognizable wrapper — surface the original validation
+    error instead of guessing."""
+    with pytest.raises(LLMProviderError) as excinfo:
+        parse_structured(
+            '{"note": {"unrelated": "value"}}', Widget, provider="fake", model="llama3"
+        )
+    assert excinfo.value.reason == LLMFailureReason.SCHEMA_VALIDATION_FAILED
+
+
+def test_parse_structured_unwraps_then_coerces_null_lists():
+    """The wrapper-unwrap and null-list coercion fixes must compose: a
+    wrapped response with an explicit `null` list field still resolves."""
+    result = parse_structured(
+        '{"TaggedWidget": {"name": "gizmo", "tags": null}}',
+        TaggedWidget,
+        provider="fake",
+        model="llama3.2:1b",
+    )
+    assert result == TaggedWidget(name="gizmo", tags=[])
+
+
+def test_parse_structured_rejects_echoed_json_schema_as_invalid_response():
+    """A small model sometimes echoes the JSON Schema it was given back as
+    its "answer" instead of producing data — see structured.py's
+    `_looks_like_schema_echo`. Because `model_json_schema()` always
+    includes a top-level `title` set to the class name, this would
+    otherwise silently validate as garbage data (title="Widget") rather
+    than fail loudly."""
+    schema_text = json.dumps(Widget.model_json_schema())
+    with pytest.raises(LLMProviderError) as excinfo:
+        parse_structured(schema_text, Widget, provider="fake", model="llama3.2:1b")
+    assert excinfo.value.reason == LLMFailureReason.INVALID_RESPONSE
+
+
+def test_parse_structured_does_not_flag_real_data_as_a_schema_echo():
+    """A legitimate response never has `type`/`properties` as top-level
+    schema field names in this codebase, but confirm the happy path is
+    unaffected regardless."""
+    result = parse_structured(
+        '{"name": "gizmo", "count": 3}', Widget, provider="fake", model="llama3"
+    )
+    assert result == Widget(name="gizmo", count=3)
 
 
 def test_repair_prompt_includes_original_prompt_and_problem():

@@ -11,7 +11,9 @@ from uuid import uuid4
 
 import pytest
 
+from infrastructure.auth import hash_password
 from shared.errors.codes import ErrorCode
+from shared.types.api.auth import LoginRequest
 from shared.types.api.users import CreateUserRequest, UpdateUserPreferencesRequest
 from shared.types.domain.user import User
 from shared.types.domain.user_preferences import UserPreferences
@@ -19,8 +21,10 @@ from shared.types.enums import RemoteWorkPreference
 from shared.types.ids import UserId, UserPreferencesId
 from users.service import UserError, UserService
 
+DEFAULT_PASSWORD = "correct-password-123"
 
-def _seed_user(users, email: str = "existing@example.com") -> User:
+
+def _seed_user(users, email: str = "existing@example.com", password: str = DEFAULT_PASSWORD) -> User:
     user = User(
         id=UserId(uuid4()),
         email=email,
@@ -29,6 +33,7 @@ def _seed_user(users, email: str = "existing@example.com") -> User:
         timezone=None,
     )
     users.users[user.id] = user
+    users.password_hashes[user.id] = hash_password(password)
     return user
 
 
@@ -40,7 +45,10 @@ def _seed_user(users, email: str = "existing@example.com") -> User:
 @pytest.mark.asyncio
 async def test_create_user_success(service: UserService) -> None:
     request = CreateUserRequest(
-        email="New.User@Example.com", display_name="  New User  ", timezone="  America/New_York  "
+        email="New.User@Example.com",
+        display_name="  New User  ",
+        password=DEFAULT_PASSWORD,
+        timezone="  America/New_York  ",
     )
 
     created = await service.create_user(request)
@@ -54,7 +62,9 @@ async def test_create_user_success(service: UserService) -> None:
 
 @pytest.mark.asyncio
 async def test_create_user_blank_timezone_becomes_none(service: UserService) -> None:
-    request = CreateUserRequest(email="user@example.com", display_name="User", timezone="   ")
+    request = CreateUserRequest(
+        email="user@example.com", display_name="User", password=DEFAULT_PASSWORD, timezone="   "
+    )
 
     created = await service.create_user(request)
 
@@ -63,7 +73,7 @@ async def test_create_user_blank_timezone_becomes_none(service: UserService) -> 
 
 @pytest.mark.asyncio
 async def test_create_user_no_timezone_is_none(service: UserService) -> None:
-    request = CreateUserRequest(email="user2@example.com", display_name="User")
+    request = CreateUserRequest(email="user2@example.com", display_name="User", password=DEFAULT_PASSWORD)
 
     created = await service.create_user(request)
 
@@ -76,7 +86,7 @@ async def test_create_user_no_timezone_is_none(service: UserService) -> None:
     ["not-an-email", "missing-domain@", "@no-local-part.com", "no-at-sign.com", "user@nodot"],
 )
 async def test_create_user_rejects_invalid_email(service: UserService, email: str) -> None:
-    request = CreateUserRequest(email=email, display_name="Someone")
+    request = CreateUserRequest(email=email, display_name="Someone", password=DEFAULT_PASSWORD)
 
     with pytest.raises(UserError) as exc_info:
         await service.create_user(request)
@@ -89,7 +99,7 @@ async def test_create_user_rejects_invalid_email(service: UserService, email: st
 async def test_create_user_rejects_blank_display_name(
     service: UserService, display_name: str
 ) -> None:
-    request = CreateUserRequest(email="user@example.com", display_name=display_name)
+    request = CreateUserRequest(email="user@example.com", display_name=display_name, password=DEFAULT_PASSWORD)
 
     with pytest.raises(UserError) as exc_info:
         await service.create_user(request)
@@ -100,7 +110,7 @@ async def test_create_user_rejects_blank_display_name(
 @pytest.mark.asyncio
 async def test_create_user_rejects_duplicate_email(service: UserService, users) -> None:
     _seed_user(users, email="taken@example.com")
-    request = CreateUserRequest(email="taken@example.com", display_name="Someone Else")
+    request = CreateUserRequest(email="taken@example.com", display_name="Someone Else", password=DEFAULT_PASSWORD)
 
     with pytest.raises(UserError) as exc_info:
         await service.create_user(request)
@@ -113,12 +123,83 @@ async def test_create_user_rejects_duplicate_email_case_insensitive(
     service: UserService, users
 ) -> None:
     _seed_user(users, email="taken@example.com")
-    request = CreateUserRequest(email="Taken@Example.com", display_name="Someone Else")
+    request = CreateUserRequest(
+        email="Taken@Example.com", display_name="Someone Else", password=DEFAULT_PASSWORD
+    )
 
     with pytest.raises(UserError) as exc_info:
         await service.create_user(request)
 
     assert exc_info.value.code == ErrorCode.VALIDATION_ERROR
+
+
+@pytest.mark.asyncio
+async def test_create_user_rejects_short_password(service: UserService) -> None:
+    request = CreateUserRequest(email="user3@example.com", display_name="User", password="short")
+
+    with pytest.raises(UserError) as exc_info:
+        await service.create_user(request)
+
+    assert exc_info.value.code == ErrorCode.VALIDATION_ERROR
+
+
+@pytest.mark.asyncio
+async def test_create_user_hashes_the_password_not_stored_in_plaintext(
+    service: UserService, users
+) -> None:
+    request = CreateUserRequest(email="user4@example.com", display_name="User", password=DEFAULT_PASSWORD)
+
+    created = await service.create_user(request)
+
+    stored_hash = users.password_hashes[created.id]
+    assert stored_hash != DEFAULT_PASSWORD
+
+
+# ---------------------------------------------------------------------------
+# login
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_login_success(service: UserService, users) -> None:
+    user = _seed_user(users, email="login@example.com")
+
+    result = await service.login(LoginRequest(email="login@example.com", password=DEFAULT_PASSWORD))
+
+    assert result.id == user.id
+
+
+@pytest.mark.asyncio
+async def test_login_unknown_email_raises_unauthorized(service: UserService) -> None:
+    with pytest.raises(UserError) as exc_info:
+        await service.login(LoginRequest(email="nobody@example.com", password=DEFAULT_PASSWORD))
+
+    assert exc_info.value.code == ErrorCode.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_login_wrong_password_raises_unauthorized(service: UserService, users) -> None:
+    _seed_user(users, email="login2@example.com")
+
+    with pytest.raises(UserError) as exc_info:
+        await service.login(LoginRequest(email="login2@example.com", password="wrong-password"))
+
+    assert exc_info.value.code == ErrorCode.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_login_wrong_password_and_unknown_email_use_the_same_message(
+    service: UserService, users
+) -> None:
+    """Never reveal which check failed."""
+    _seed_user(users, email="login3@example.com")
+
+    with pytest.raises(UserError) as wrong_password:
+        await service.login(LoginRequest(email="login3@example.com", password="wrong-password"))
+    with pytest.raises(UserError) as unknown_email:
+        await service.login(LoginRequest(email="nobody@example.com", password=DEFAULT_PASSWORD))
+
+    assert wrong_password.value.message == unknown_email.value.message
 
 
 # ---------------------------------------------------------------------------

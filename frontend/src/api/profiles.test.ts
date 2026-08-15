@@ -12,8 +12,8 @@ import { getProfile, listProfiles, useProfile, useProfiles } from './profiles'
 import { createWrapper } from './test-utils'
 
 describe('profiles.ts functions', () => {
-  it('listProfiles resolves the list for a user', async () => {
-    const result = await listProfiles('user-1')
+  it('listProfiles resolves the list for the authenticated user', async () => {
+    const result = await listProfiles()
     expect(result).toHaveLength(1)
     expect(result[0].user_id).toBe('user-1')
   })
@@ -39,7 +39,7 @@ describe('profiles.ts functions', () => {
   it('propagates a network failure as ApiError', async () => {
     server.use(http.get(`${API_BASE_URL}/profiles`, () => HttpResponse.error()))
 
-    const error = await listProfiles('user-1').catch((e: unknown) => e)
+    const error = await listProfiles().catch((e: unknown) => e)
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).code).toBe('NETWORK_ERROR')
@@ -47,11 +47,8 @@ describe('profiles.ts functions', () => {
 })
 
 describe('profiles.ts hooks', () => {
-  it('useProfiles resolves and does not fire when userId is empty', async () => {
-    const { result: empty } = renderHook(() => useProfiles(''), { wrapper: createWrapper() })
-    expect(empty.current.fetchStatus).toBe('idle')
-
-    const { result } = renderHook(() => useProfiles('user-1'), { wrapper: createWrapper() })
+  it('useProfiles resolves the list', async () => {
+    const { result } = renderHook(() => useProfiles(), { wrapper: createWrapper() })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(result.current.data).toHaveLength(1)
   })

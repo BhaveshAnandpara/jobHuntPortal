@@ -15,13 +15,15 @@ becomes a real, enforced state transition
 (`outreach.consumers.handle_outreach_approved`) never runs off anything
 else.
 
-Caller-ownership: this codebase has no auth/session layer anywhere (no
-other component implements one either — service-boundaries.md never
-mentions one). Per this component's task brief, "caller owns the outreach"
-is implemented as "the request succeeds because there's no cross-user
-leakage risk to guard against yet" — no invented auth mechanism. `decided_by`
-is set to `Outreach.user_id` (the only identity available without an auth
-layer). Flagged for a future security pass in the implementation report.
+Caller-ownership: `GET /outreach` now derives `user_id` from the
+authenticated token (`infrastructure.auth`) rather than a client-supplied
+query param. `approve`/`reject`/`edit` do NOT yet check that the caller
+actually owns the specific `outreach_id` they're acting on — any
+authenticated caller can act on any id, same as before this pass. Real
+per-resource ownership enforcement (not just "is this caller authenticated
+at all") is explicitly deferred to a follow-up. `decided_by` is set to
+`Outreach.user_id` (the row's own owner), not the caller's token, pending
+that follow-up.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from infrastructure.auth import CurrentUserIdDependency
 from infrastructure.logging import format_context, get_logger
 from outreach.api.dependencies import get_outreach_repository
 from outreach.events import publish_outreach_approved
@@ -45,7 +48,7 @@ from shared.types.api.outreach import (
 )
 from shared.types.domain.outreach import Outreach
 from shared.types.enums import OutreachDecisionType, OutreachStatus
-from shared.types.ids import OutreachId, UserId
+from shared.types.ids import OutreachId
 
 router = APIRouter(tags=["outreach"])
 logger = get_logger(__name__)
@@ -101,11 +104,11 @@ def _conflict(outreach: Outreach) -> HTTPException:
 
 @router.get("/outreach", response_model=list[OutreachResponse])
 async def list_outreach(
-    user_id: UUID,
+    user_id: CurrentUserIdDependency,
     repository: OutreachRepositoryDep,
     status: OutreachStatus | None = None,
 ) -> list[OutreachResponse]:
-    records = await repository.list_for_user(UserId(user_id), status)
+    records = await repository.list_for_user(user_id, status)
     return [_response(record) for record in records]
 
 

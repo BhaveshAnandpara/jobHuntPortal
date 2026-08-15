@@ -71,6 +71,53 @@ def _is_list_annotation(annotation: object) -> bool:
     return False
 
 
+def _unwrap_schema_wrapper(parsed: dict, schema: type[BaseModel]) -> dict:
+    """Recover from a model wrapping its answer in one extra top-level key
+    instead of returning the bare object — e.g. `{"ExtractedResumeProfile":
+    {...}}`, `{"profile": {...}}`, `{"result": {...}}`, `{"data": {...}}` —
+    even when the prompt explicitly says not to. Small local models (e.g.
+    `llama3.2:1b`) do this often enough that it needs handling here, at the
+    shared JSON-to-schema seam every structured call passes through, rather
+    than as a resume-specific special case.
+
+    Only unwraps when it's unambiguous: exactly one top-level key, whose
+    value is itself a dict, where the *outer* key is not a field on `schema`
+    but the *inner* dict shares at least one field name with `schema`. That
+    keeps a legitimately-shaped response (whose one populated field happens
+    to be a dict) from being misread as a wrapper.
+    """
+    if len(parsed) != 1:
+        return parsed
+    ((key, value),) = parsed.items()
+    if not isinstance(value, dict):
+        return parsed
+    schema_fields = schema.model_fields.keys()
+    if key in schema_fields:
+        return parsed
+    if not (value.keys() & schema_fields):
+        return parsed
+    return value
+
+
+def _looks_like_schema_echo(parsed: dict) -> bool:
+    """True if `parsed` is the *JSON Schema definition* itself rather than
+    data conforming to it — e.g. a small model asked to "return an object
+    matching this JSON Schema: {...}" sometimes echoes that schema object
+    back verbatim instead of producing an instance of it.
+
+    This is easy to miss downstream: `model_json_schema()` always includes
+    a top-level `"title"` set to the class name, so an echoed schema for
+    `ExtractedResumeProfile` validates as data with `title=
+    "ExtractedResumeProfile"` — syntactically valid, semantically garbage,
+    and Pydantic never raises on it. Detected structurally (`"properties"`
+    + `"type": "object"` at the top level) rather than by name, so it
+    applies to any schema this layer is asked to fill in, not just resumes:
+    no real extraction schema in this codebase has fields literally named
+    `properties`/`type`, so this can't misfire on genuine data.
+    """
+    return parsed.get("type") == "object" and isinstance(parsed.get("properties"), dict)
+
+
 def _coerce_null_lists(parsed: dict, schema: type[BaseModel]) -> None:
     """Rewrite an explicit JSON `null` to `[]` for any list-typed field,
     in place.
@@ -114,7 +161,18 @@ def parse_structured(
             raw_text=text,
         ) from exc
 
+    if isinstance(parsed, dict) and _looks_like_schema_echo(parsed):
+        raise LLMProviderError(
+            LLMFailureReason.INVALID_RESPONSE,
+            "response was the JSON Schema definition, not data matching it",
+            provider=provider,
+            model=model,
+            attempts=attempts,
+            raw_text=text,
+        )
+
     if isinstance(parsed, dict):
+        parsed = _unwrap_schema_wrapper(parsed, schema)
         _coerce_null_lists(parsed, schema)
 
     try:

@@ -17,11 +17,8 @@ import type {
 } from './types'
 import type { RefetchInterval } from '../hooks/usePolling'
 
-export function listApplications(
-  userId: string,
-  status?: string,
-): Promise<ApplicationResponse[]> {
-  const query = status ? `?user_id=${userId}&status=${status}` : `?user_id=${userId}`
+export function listApplications(status?: string): Promise<ApplicationResponse[]> {
+  const query = status ? `?status=${status}` : ''
   return apiClient.get<ApplicationResponse[]>(`/applications${query}`)
 }
 
@@ -49,14 +46,12 @@ export function getApplicationHistory(
  * `refetchInterval` rather than this hook picking one.
  */
 export function useApplications(
-  userId: string,
   status?: string,
   options?: { refetchInterval?: RefetchInterval<ApplicationResponse[]> },
 ) {
   return useQuery({
-    queryKey: queryKeys.applications(userId, status),
-    queryFn: () => listApplications(userId, status),
-    enabled: Boolean(userId),
+    queryKey: queryKeys.applications(status),
+    queryFn: () => listApplications(status),
     refetchInterval: options?.refetchInterval,
   })
 }
@@ -90,12 +85,6 @@ export function useApplicationHistory(applicationId: string) {
   })
 }
 
-/**
- * `userId` isn't part of `UpdateApplicationStatusRequest`/the response, but
- * is needed to invalidate the scoped `applications(userId)` list — callers
- * (which already have the active user in context) supply it alongside the
- * path/body params.
- */
 export function useUpdateApplicationStatus() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -104,12 +93,11 @@ export function useUpdateApplicationStatus() {
       body,
     }: {
       applicationId: string
-      userId: string
       body: UpdateApplicationStatusRequest
     }) => updateApplicationStatus(applicationId, body),
     onSuccess: (_data, variables) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.application(variables.applicationId) })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.applications(variables.userId) })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.applications() })
       void queryClient.invalidateQueries({ queryKey: queryKeys.history(variables.applicationId) })
     },
   })

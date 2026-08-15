@@ -65,15 +65,16 @@ async function setFilesViaPinnedFileList(locator: Locator, filePaths: string[]) 
 }
 
 /**
- * Creates a brand-new local identity via /welcome and lands on the
- * Dashboard. Returns the display name used, for later assertions.
+ * Registers a brand-new account via /register (real password auth — see
+ * RegisterPage.tsx) and lands on the Dashboard. Returns the display name
+ * and password used, for later assertions/re-login.
  *
  * The two waits below use an explicit, generous timeout rather than
  * Playwright's bare 5s `expect` default — this helper runs at the start of
  * nearly every test in this suite (dozens of times per full run), and a
  * full-suite run (`npm run e2e` with no file filter) was confirmed to
  * intermittently exceed 5s here purely on Vite dev-server transform/serve
- * latency under sustained load (no app logic involved — `/welcome` is a
+ * latency under sustained load (no app logic involved — `/register` is a
  * static render with no backend dependency) — reproduced by comparing an
  * isolated single-file run (always fast, well under 5s) against the same
  * spec run as part of the full suite (occasionally 5s+). A modest, targeted
@@ -83,14 +84,16 @@ async function setFilesViaPinnedFileList(locator: Locator, filePaths: string[]) 
 export async function createIdentity(page: Page, opts?: { displayName?: string; emailPrefix?: string }) {
   const displayName = opts?.displayName ?? 'E2E Test User'
   const email = uniqueEmail(opts?.emailPrefix ?? 'e2e')
+  const password = 'e2e-test-password-123'
 
-  await page.goto('/welcome')
-  await expect(page.getByRole('heading', { name: 'Welcome' })).toBeVisible({ timeout: 20_000 })
+  await page.goto('/register')
+  await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible({ timeout: 20_000 })
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Display name').fill(displayName)
-  await page.getByRole('button', { name: 'Create identity' }).click()
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: 'Create account' }).click()
   await expect(page).toHaveURL('/', { timeout: 20_000 })
-  return { email, displayName }
+  return { email, displayName, password }
 }
 
 /** Uploads one or more resume files via the /resumes page's hidden file

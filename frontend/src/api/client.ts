@@ -7,8 +7,19 @@
  * Owner: frontend-api-agent.
  */
 
+import { clearToken, getToken } from '../hooks/identity'
+
 export const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8000'
+
+/**
+ * `POST /auth/login` is excluded from the global 401 handler below — a
+ * wrong-password attempt there is normal, expected user input (the login
+ * form's own `onError` shows it inline), not an expired session. Auto-
+ * redirecting on that specific 401 would tear the page down before the
+ * form could ever render "invalid email or password".
+ */
+const _NO_AUTO_LOGOUT_PATHS = new Set(['/auth/login'])
 
 /**
  * The one error shape every backend router returns for a non-2xx response
@@ -50,12 +61,14 @@ async function parseErrorBody(response: Response): Promise<BackendErrorBody | nu
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
+  const token = getToken()
 
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
       headers: {
         'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...init?.headers,
       },
     })
@@ -65,6 +78,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const body = await parseErrorBody(response)
+
+    // A 401 outside login means the token is missing/expired/invalid —
+    // clear it and send the user back to /login. A full reload (not
+    // useNavigate) since this plain module has no router access, and this
+    // is an acceptable, simple behavior given there's no token
+    // refresh/revocation in this pass anyway.
+    if (response.status === 401 && !_NO_AUTO_LOGOUT_PATHS.has(path)) {
+      clearToken()
+      window.location.assign('/login')
+    }
+
     throw new ApiError(
       response.status,
       body?.detail?.code ?? 'UNKNOWN_ERROR',

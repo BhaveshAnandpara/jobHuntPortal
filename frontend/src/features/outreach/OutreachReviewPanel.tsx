@@ -29,7 +29,7 @@
  *        of truth for *which* record is shown, and pass fresh props down
  *        after every refetch (including the 409-triggered refetch built
  *        into the mutation hooks in `api/outreach.ts`).
- *        `userId`, optional `applicationId` (passed straight through to
+ *        Optional `applicationId` (passed straight through to
  *        `useApproveOutreach` for the more targeted cache invalidation
  *        described there, when the caller happens to have it).
  */
@@ -52,7 +52,6 @@ import type { OutreachResponse } from '../../api/types'
 
 export type OutreachReviewPanelProps = {
   outreach: OutreachResponse
-  userId: string
   applicationId?: string
 }
 
@@ -89,7 +88,7 @@ function statusHelperCopy(status: OutreachResponse['status']): string | null {
   }
 }
 
-export function OutreachReviewPanel({ outreach, userId, applicationId }: OutreachReviewPanelProps) {
+export function OutreachReviewPanel({ outreach, applicationId }: OutreachReviewPanelProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [conflictMessage, setConflictMessage] = useState<string | null>(null)
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false)
@@ -161,7 +160,7 @@ export function OutreachReviewPanel({ outreach, userId, applicationId }: Outreac
   function handleApprove() {
     setConflictMessage(null)
     approveMutation.mutate(
-      { outreachId: outreach.id, userId, applicationId, body: { final_message: null } },
+      { outreachId: outreach.id, applicationId, body: { final_message: null } },
       { onError: handleMutationError },
     )
   }
@@ -169,13 +168,13 @@ export function OutreachReviewPanel({ outreach, userId, applicationId }: Outreac
   function handleReject() {
     setRejectDialogOpen(false)
     setConflictMessage(null)
-    rejectMutation.mutate({ outreachId: outreach.id, userId }, { onError: handleMutationError })
+    rejectMutation.mutate({ outreachId: outreach.id }, { onError: handleMutationError })
   }
 
   function onEditSubmit(values: EditFormValues) {
     setConflictMessage(null)
     editMutation.mutate(
-      { outreachId: outreach.id, userId, body: { message: values.message } },
+      { outreachId: outreach.id, body: { message: values.message } },
       {
         onSuccess: () => setIsEditing(false),
         onError: handleMutationError,

@@ -75,13 +75,13 @@ _JOB_PAGE_TEXT = (
 )
 
 
-async def _drive_to_outreach_generated(harness: IntegrationHarness) -> tuple[str, str]:
+async def _drive_to_outreach_generated(harness: IntegrationHarness) -> tuple[str, str, dict]:
     """Shared setup: drives the chain from jobs.discovered through
-    outreach.generated. Returns (job_id, outreach_id).
+    outreach.generated. Returns (job_id, outreach_id, user).
     """
     user = harness.create_user()
     harness.set_profiles_llm([llm_response(_PROFILE_FIELDS)])
-    harness.upload_resume(user["id"], "resume.txt", _RESUME_TEXT)
+    harness.upload_resume(user, "resume.txt", _RESUME_TEXT)
 
     harness.set_job_ingestion_fakes(
         pages={JOB_URL: _JOB_PAGE_TEXT},
@@ -96,10 +96,10 @@ async def _drive_to_outreach_generated(harness: IntegrationHarness) -> tuple[str
             )
         },
     )
-    job = harness.ingest_job(user["id"], JOB_URL)
+    job = harness.ingest_job(user, JOB_URL)
     job_id = job["id"]
 
-    harness.sync_matching_profiles(user["id"])
+    harness.sync_matching_profiles(user)
     harness.set_matching_preferences(FakeUserPreferencesClient({}))
     harness.set_matching_llm(
         MatchingFakeLLMClient(
@@ -157,14 +157,14 @@ async def _drive_to_outreach_generated(harness: IntegrationHarness) -> tuple[str
     generated = log_envelopes(harness.broker, Topic.OUTREACH_GENERATED)[0]
     await dispatch(Topic.OUTREACH_GENERATED, generated)
 
-    return job_id, str(generated.payload.outreach_id), user["id"]
+    return job_id, str(generated.payload.outreach_id), user
 
 
 @pytest.mark.asyncio
 async def test_lifecycle_reaches_outreach_sent_with_ordered_history(
     harness: IntegrationHarness,
 ) -> None:
-    _job_id, outreach_id, user_id = await _drive_to_outreach_generated(harness)
+    _job_id, outreach_id, user = await _drive_to_outreach_generated(harness)
 
     harness.approve_outreach(outreach_id)
     approved = log_envelopes(harness.broker, Topic.OUTREACH_APPROVED)[0]
@@ -173,7 +173,7 @@ async def test_lifecycle_reaches_outreach_sent_with_ordered_history(
     await dispatch(Topic.OUTREACH_SENT, sent)
 
     applications = harness.client.get(
-        "/applications", params={"user_id": user_id}
+        "/applications", headers=harness.auth_headers(user)
     ).json()
     assert len(applications) == 1
     application = applications[0]
@@ -199,14 +199,14 @@ async def test_lifecycle_reaches_outreach_sent_with_ordered_history(
 async def test_duplicate_delivery_produces_no_duplicate_history_row(
     harness: IntegrationHarness,
 ) -> None:
-    _job_id, _outreach_id, user_id = await _drive_to_outreach_generated(harness)
+    _job_id, _outreach_id, user = await _drive_to_outreach_generated(harness)
 
     generated_envelope = log_envelopes(harness.broker, Topic.OUTREACH_GENERATED)[0]
     # Redeliver the identical envelope a second time directly.
     await dispatch(Topic.OUTREACH_GENERATED, generated_envelope)
 
     applications = harness.client.get(
-        "/applications", params={"user_id": user_id}
+        "/applications", headers=harness.auth_headers(user)
     ).json()
     application_id = applications[0]["id"]
     history = harness.client.get(f"/applications/{application_id}/history").json()
@@ -233,8 +233,10 @@ async def test_out_of_order_jobs_matched_before_jobs_discovered_creates_applicat
     )
     await tracking_consumers._handle_job_matched_async(matched_envelope)
 
+    from infrastructure.auth import create_access_token
+
     applications = harness.client.get(
-        "/applications", params={"user_id": str(user_id)}
+        "/applications", headers={"Authorization": f"Bearer {create_access_token(user_id)}"}
     ).json()
     assert len(applications) == 1
     application = applications[0]

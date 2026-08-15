@@ -21,7 +21,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/users/{user_id}/preferences": {
+    "/users/me/preferences": {
         parameters: {
             query?: never;
             header?: never;
@@ -29,10 +29,27 @@ export interface paths {
             cookie?: never;
         };
         /** Get Preferences */
-        get: operations["get_preferences_users__user_id__preferences_get"];
+        get: operations["get_preferences_users_me_preferences_get"];
         /** Replace Preferences */
-        put: operations["replace_preferences_users__user_id__preferences_put"];
+        put: operations["replace_preferences_users_me_preferences_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Login */
+        post: operations["login_auth_login_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -126,6 +143,10 @@ export interface paths {
          *     404 `NOT_FOUND`, but dependency-graph.md documents zero runtime API
          *     calls from Job Ingestion Service to User Service, so this handler has
          *     no documented way to verify `user_id` exists and does not attempt to.
+         *     `user_id` is now token-derived rather than client-supplied (see
+         *     `infrastructure.auth`), which closes the "client can claim any
+         *     user_id" gap but not this one — a valid token's user_id still isn't
+         *     checked for existence in the `users` table.
          */
         post: operations["ingest_job_url_route_jobs_ingest_url_post"];
         delete?: never;
@@ -231,7 +252,8 @@ export interface paths {
          *     "not a self-call"). The result arrives later via `contacts.found`,
          *     handled by this component's own `contacts.requested` consumer just
          *     like the automatic path — see gap 2 in this module's docstring for why
-         *     the request body carries `user_id`/`company`/`title`.
+         *     the request body carries `company`/`title` (`user_id` is now
+         *     token-derived rather than a third additive body field).
          */
         post: operations["trigger_contact_search_jobs__job_id__contacts_search_post"];
         delete?: never;
@@ -531,11 +553,6 @@ export interface components {
         ContactType: "PRACTITIONER" | "TEAM_LEAD" | "HIRING_MANAGER" | "RECRUITER" | "EXECUTIVE" | "DEPARTMENT_LEADER" | "OTHER";
         /** CreateJobSourceRequest */
         CreateJobSourceRequest: {
-            /**
-             * User Id
-             * Format: uuid
-             */
-            user_id: string;
             /** Name */
             name: string;
             type: components["schemas"]["JobSourceType"];
@@ -548,11 +565,6 @@ export interface components {
         };
         /** CreateResumeRequest */
         CreateResumeRequest: {
-            /**
-             * User Id
-             * Format: uuid
-             */
-            user_id: string;
             /** File Name */
             file_name: string;
             /** File Content */
@@ -564,6 +576,8 @@ export interface components {
             email: string;
             /** Display Name */
             display_name: string;
+            /** Password */
+            password: string;
             /** Timezone */
             timezone?: string | null;
         };
@@ -597,11 +611,6 @@ export interface components {
         };
         /** IngestJobUrlRequest */
         IngestJobUrlRequest: {
-            /**
-             * User Id
-             * Format: uuid
-             */
-            user_id: string;
             /** Url */
             url: string;
         };
@@ -718,6 +727,24 @@ export interface components {
          * @enum {string}
          */
         JobSourceType: "MANUAL_URL" | "LINKEDIN" | "INDEED" | "COMPANY_CAREERS_PAGE" | "OTHER";
+        /** LoginRequest */
+        LoginRequest: {
+            /** Email */
+            email: string;
+            /** Password */
+            password: string;
+        };
+        /** LoginResponse */
+        LoginResponse: {
+            /** Access Token */
+            access_token: string;
+            /**
+             * Token Type
+             * @default bearer
+             */
+            token_type: string;
+            user: components["schemas"]["UserResponse"];
+        };
         /**
          * MatchRecommendation
          * @description Owner: Job Matching Service.
@@ -907,11 +934,6 @@ export interface components {
          *     part of api-contracts.md's documented (path-param-only) input.
          */
         TriggerContactSearchRequest: {
-            /**
-             * User Id
-             * Format: uuid
-             */
-            user_id: string;
             /** Company */
             company: string;
             /** Title */
@@ -1059,7 +1081,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserResponse"];
+                    "application/json": components["schemas"]["LoginResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1073,13 +1095,11 @@ export interface operations {
             };
         };
     };
-    get_preferences_users__user_id__preferences_get: {
+    get_preferences_users_me_preferences_get: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                user_id: string;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -1093,24 +1113,13 @@ export interface operations {
                     "application/json": components["schemas"]["UserPreferencesResponse"];
                 };
             };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
         };
     };
-    replace_preferences_users__user_id__preferences_put: {
+    replace_preferences_users_me_preferences_put: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                user_id: string;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody: {
@@ -1139,11 +1148,42 @@ export interface operations {
             };
         };
     };
+    login_auth_login_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_resumes_resumes_get: {
         parameters: {
-            query: {
-                user_id: string;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -1157,15 +1197,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResumeResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1234,9 +1265,7 @@ export interface operations {
     };
     list_profiles_profiles_get: {
         parameters: {
-            query: {
-                user_id: string;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -1250,15 +1279,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResumeProfile"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1360,9 +1380,7 @@ export interface operations {
     };
     list_job_sources_job_sources_get: {
         parameters: {
-            query: {
-                user_id: string;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -1376,15 +1394,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobSourceResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1521,8 +1530,7 @@ export interface operations {
     };
     list_outreach_outreach_get: {
         parameters: {
-            query: {
-                user_id: string;
+            query?: {
                 status?: components["schemas"]["OutreachStatus"] | null;
             };
             header?: never;
@@ -1685,8 +1693,7 @@ export interface operations {
     };
     list_applications_applications_get: {
         parameters: {
-            query: {
-                user_id: string;
+            query?: {
                 status?: components["schemas"]["ApplicationStatus"] | null;
             };
             header?: never;

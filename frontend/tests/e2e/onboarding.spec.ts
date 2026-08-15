@@ -2,18 +2,20 @@ import { test, expect } from '@playwright/test'
 import { createIdentity } from './helpers'
 
 /**
- * Identity flow: no user_id -> /welcome -> create -> persisted -> protected
- * routes available; existing user_id -> no duplicate creation.
+ * Auth flow: no token -> /login -> register -> persisted -> protected
+ * routes available; existing token -> redirected away from /register and
+ * /login instead of re-registering/re-authenticating; logging out clears
+ * the token and blocks protected routes again.
  */
 
-test('no identity redirects to /welcome, protected routes are blocked until created', async ({ page }) => {
+test('no token redirects to /login, protected routes are blocked until registered', async ({ page }) => {
   await page.goto('/opportunities')
-  await expect(page).toHaveURL('/welcome')
-  await expect(page.getByRole('heading', { name: 'Welcome' })).toBeVisible()
+  await expect(page).toHaveURL('/login')
+  await expect(page.getByRole('heading', { name: 'Log in' })).toBeVisible()
 })
 
-test('creating an identity persists it and unlocks protected routes without a login step', async ({ page }) => {
-  const { displayName } = await createIdentity(page, { emailPrefix: 'onboard' })
+test('registering an account persists a token and unlocks protected routes', async ({ page }) => {
+  await createIdentity(page, { emailPrefix: 'onboard' })
 
   // Protected routes are now reachable directly.
   await page.goto('/resumes')
@@ -22,24 +24,42 @@ test('creating an identity persists it and unlocks protected routes without a lo
   await expect(page.getByRole('heading', { name: 'Outreach Queue' })).toBeVisible()
   await page.goto('/settings')
   await expect(page.getByRole('heading', { name: 'Search Preferences' })).toBeVisible()
-
-  // No password/login step anywhere — this is explicitly not authentication.
-  await expect(page.getByText(displayName)).toHaveCount(0) // display name isn't even shown as a "logged in as" banner anywhere; sanity check it's not fabricated UI
 })
 
-test('an existing identity redirects away from /welcome instead of creating a duplicate user', async ({ page }) => {
+test('an existing token redirects away from /register and /login instead of re-authenticating', async ({ page }) => {
   await createIdentity(page, { emailPrefix: 'onboard-existing' })
 
-  // Navigating back to /welcome with an identity already set redirects to /
-  // rather than showing the create-identity form again.
-  await page.goto('/welcome')
+  // Navigating back to /register or /login with a token already set
+  // redirects to / rather than showing the form again.
+  await page.goto('/register')
   await expect(page).toHaveURL('/')
-  await expect(page.getByRole('heading', { name: 'Welcome' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Create your account' })).toHaveCount(0)
+
+  await page.goto('/login')
+  await expect(page).toHaveURL('/')
+  await expect(page.getByRole('heading', { name: 'Log in' })).toHaveCount(0)
 })
 
-test('identity persists across a full page reload (localStorage, not session state)', async ({ page }) => {
+test('token persists across a full page reload (localStorage, not session state)', async ({ page }) => {
   await createIdentity(page, { emailPrefix: 'onboard-reload' })
   await page.reload()
   await expect(page).toHaveURL('/')
   await expect(page.getByLabel('Paste a job posting URL')).toBeVisible()
+})
+
+test('logging out clears the token and blocks protected routes until logging back in', async ({ page }) => {
+  const { email, password } = await createIdentity(page, { emailPrefix: 'onboard-logout' })
+
+  await page.getByRole('button', { name: 'Log out' }).click()
+  await expect(page).toHaveURL('/login')
+
+  // Protected routes are blocked again — no lingering token.
+  await page.goto('/opportunities')
+  await expect(page).toHaveURL('/login')
+
+  // Logging back in with the same credentials restores access.
+  await page.getByLabel('Email').fill(email)
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: 'Log in' }).click()
+  await expect(page).toHaveURL('/')
 })

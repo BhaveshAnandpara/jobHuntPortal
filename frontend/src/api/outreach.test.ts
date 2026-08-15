@@ -37,11 +37,10 @@ describe('outreach.ts functions', () => {
       }),
     )
 
-    await listOutreach('user-1')
-    expect(lastUrl).toContain('user_id=user-1')
+    await listOutreach()
     expect(lastUrl).not.toContain('status=')
 
-    await listOutreach('user-1', 'PENDING_APPROVAL')
+    await listOutreach('PENDING_APPROVAL')
     expect(lastUrl).toContain('status=PENDING_APPROVAL')
   })
 
@@ -105,11 +104,8 @@ describe('outreach.ts functions', () => {
 })
 
 describe('outreach.ts hooks', () => {
-  it('useOutreachList resolves and does not fire when userId is empty', async () => {
-    const { result: empty } = renderHook(() => useOutreachList(''), { wrapper: createWrapper() })
-    expect(empty.current.fetchStatus).toBe('idle')
-
-    const { result } = renderHook(() => useOutreachList('user-1'), { wrapper: createWrapper() })
+  it('useOutreachList resolves the list', async () => {
+    const { result } = renderHook(() => useOutreachList(), { wrapper: createWrapper() })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(result.current.data).toHaveLength(1)
   })
@@ -123,7 +119,7 @@ describe('outreach.ts hooks', () => {
     expect(result.current.data?.id).toBe('outreach-1')
   })
 
-  it('useApproveOutreach invalidates outreachList, outreachItem, and applications(userId) on success', async () => {
+  it('useApproveOutreach invalidates outreachList, outreachItem, and applications() on success', async () => {
     let outreachListCalls = 0
     let outreachItemCalls = 0
     let applicationsCalls = 0
@@ -153,9 +149,9 @@ describe('outreach.ts hooks', () => {
       }),
     )
     const wrapper = createWrapper()
-    const { result: listResult } = renderHook(() => useOutreachList('user-1'), { wrapper })
+    const { result: listResult } = renderHook(() => useOutreachList(), { wrapper })
     const { result: itemResult } = renderHook(() => useOutreachItem('outreach-1'), { wrapper })
-    const { result: appsResult } = renderHook(() => useApplications('user-1'), { wrapper })
+    const { result: appsResult } = renderHook(() => useApplications(), { wrapper })
     await waitFor(() => expect(listResult.current.isSuccess).toBe(true))
     await waitFor(() => expect(itemResult.current.isSuccess).toBe(true))
     await waitFor(() => expect(appsResult.current.isSuccess).toBe(true))
@@ -164,7 +160,7 @@ describe('outreach.ts hooks', () => {
     expect(applicationsCalls).toBe(1)
 
     const { result: approveResult } = renderHook(() => useApproveOutreach(), { wrapper })
-    approveResult.current.mutate({ outreachId: 'outreach-1', userId: 'user-1', body: { final_message: null } })
+    approveResult.current.mutate({ outreachId: 'outreach-1', body: { final_message: null } })
 
     await waitFor(() => expect(approveResult.current.isSuccess).toBe(true))
     await waitFor(() => expect(outreachListCalls).toBe(2))
@@ -210,7 +206,6 @@ describe('outreach.ts hooks', () => {
     const { result: approveResult } = renderHook(() => useApproveOutreach(), { wrapper })
     approveResult.current.mutate({
       outreachId: 'outreach-1',
-      userId: 'user-1',
       applicationId: 'app-1',
       body: { final_message: null },
     })
@@ -248,7 +243,7 @@ describe('outreach.ts hooks', () => {
     expect(outreachItemCalls).toBe(1)
 
     const { result: approveResult } = renderHook(() => useApproveOutreach(), { wrapper })
-    approveResult.current.mutate({ outreachId: 'outreach-1', userId: 'user-1', body: { final_message: null } })
+    approveResult.current.mutate({ outreachId: 'outreach-1', body: { final_message: null } })
 
     await waitFor(() => expect(approveResult.current.isError).toBe(true))
     expect((approveResult.current.error as ApiError).status).toBe(409)
@@ -264,12 +259,12 @@ describe('outreach.ts hooks', () => {
       }),
     )
     const wrapper = createWrapper()
-    const { result: appsResult } = renderHook(() => useApplications('user-1'), { wrapper })
+    const { result: appsResult } = renderHook(() => useApplications(), { wrapper })
     await waitFor(() => expect(appsResult.current.isSuccess).toBe(true))
     expect(applicationsCalls).toBe(1)
 
     const { result: rejectResult } = renderHook(() => useRejectOutreach(), { wrapper })
-    rejectResult.current.mutate({ outreachId: 'outreach-1', userId: 'user-1' })
+    rejectResult.current.mutate({ outreachId: 'outreach-1' })
 
     await waitFor(() => expect(rejectResult.current.isSuccess).toBe(true))
     // Give any (incorrect) invalidation a chance to fire before asserting it didn't.
@@ -305,7 +300,7 @@ describe('outreach.ts hooks', () => {
     expect(outreachItemCalls).toBe(1)
 
     const { result: rejectResult } = renderHook(() => useRejectOutreach(), { wrapper })
-    rejectResult.current.mutate({ outreachId: 'outreach-1', userId: 'user-1' })
+    rejectResult.current.mutate({ outreachId: 'outreach-1' })
 
     await waitFor(() => expect(rejectResult.current.isError).toBe(true))
     await waitFor(() => expect(outreachItemCalls).toBe(2))
@@ -325,15 +320,15 @@ describe('outreach.ts hooks', () => {
       }),
     )
     const wrapper = createWrapper()
-    const { result: listResult } = renderHook(() => useOutreachList('user-1'), { wrapper })
-    const { result: appsResult } = renderHook(() => useApplications('user-1'), { wrapper })
+    const { result: listResult } = renderHook(() => useOutreachList(), { wrapper })
+    const { result: appsResult } = renderHook(() => useApplications(), { wrapper })
     await waitFor(() => expect(listResult.current.isSuccess).toBe(true))
     await waitFor(() => expect(appsResult.current.isSuccess).toBe(true))
     expect(outreachListCalls).toBe(1)
     expect(applicationsCalls).toBe(1)
 
     const { result: editResult } = renderHook(() => useEditOutreach(), { wrapper })
-    editResult.current.mutate({ outreachId: 'outreach-1', userId: 'user-1', body: { message: 'Updated' } })
+    editResult.current.mutate({ outreachId: 'outreach-1', body: { message: 'Updated' } })
 
     await waitFor(() => expect(editResult.current.isSuccess).toBe(true))
     await waitFor(() => expect(outreachListCalls).toBe(2))

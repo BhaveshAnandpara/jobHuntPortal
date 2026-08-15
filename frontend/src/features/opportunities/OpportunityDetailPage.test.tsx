@@ -19,7 +19,8 @@ import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import { server } from '../../../tests/mocks/server'
 import { API_BASE_URL } from '../../api/client'
-import { setCurrentUserId } from '../../hooks/identity'
+import { setToken } from '../../hooks/identity'
+import { mintTestToken } from '../../../tests/support/jwt'
 import { IdentityProvider } from '../../hooks/IdentityProvider'
 import { OpportunityDetailPage } from './OpportunityDetailPage'
 
@@ -52,7 +53,7 @@ function applicationFixture(overrides: Record<string, unknown> = {}) {
 }
 
 function renderDetail(applicationId = 'app-1') {
-  setCurrentUserId('user-1')
+  setToken(mintTestToken('user-1'))
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })

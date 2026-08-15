@@ -24,14 +24,21 @@ const base = API_BASE_URL
 // User Service
 // ---------------------------------------------------------------------------
 
+function loginResponseFixture(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    access_token: 'test.jwt.token',
+    token_type: 'bearer',
+    user: { id: 'user-1', email: 'a@example.com', display_name: 'Ada', created_at: '2026-01-01T00:00:00Z' },
+    ...overrides,
+  }
+}
+
 export const userHandlers = [
-  http.post(`${base}/users`, () =>
-    HttpResponse.json(
-      { id: 'user-1', email: 'a@example.com', display_name: 'Ada', created_at: '2026-01-01T00:00:00Z' },
-      { status: 201 },
-    ),
-  ),
-  http.get(`${base}/users/:userId/preferences`, () =>
+  // Registration auto-logs-in — returns a LoginResponse (token + user), not
+  // a bare UserResponse.
+  http.post(`${base}/users`, () => HttpResponse.json(loginResponseFixture(), { status: 201 })),
+  http.post(`${base}/auth/login`, () => HttpResponse.json(loginResponseFixture())),
+  http.get(`${base}/users/me/preferences`, () =>
     HttpResponse.json({
       id: 'pref-1',
       user_id: 'user-1',
@@ -43,7 +50,7 @@ export const userHandlers = [
       salary_currency: null,
     }),
   ),
-  http.put(`${base}/users/:userId/preferences`, () =>
+  http.put(`${base}/users/me/preferences`, () =>
     HttpResponse.json({
       id: 'pref-1',
       user_id: 'user-1',
