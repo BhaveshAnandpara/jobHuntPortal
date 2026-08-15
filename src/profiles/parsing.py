@@ -24,15 +24,19 @@ point — not before.
 from __future__ import annotations
 
 import asyncio
+import io
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from docx import Document
 from pydantic import BaseModel
+from pypdf import PdfReader
 
 from infrastructure.llm import LLMClient
-from infrastructure.llm.errors import LLMFailureReason, LLMProviderError
+from infrastructure.llm.errors import LLMFailureReason, LLMProviderError, excerpt
+from infrastructure.logging import format_context, get_logger
 from shared.errors.codes import ErrorCode
 from shared.types.domain.candidate_profile import CandidateProfile
 from shared.types.domain.resume import Resume
@@ -40,12 +44,13 @@ from shared.types.dto import EducationEntry
 from shared.types.enums import ProfileStatus
 from shared.types.ids import ProfileId
 
+logger = get_logger(__name__)
+
 # Files supported for upload/parsing, per
 # docs/architecture/component-contracts.md#post-resumes-upload
 # ("file type in {pdf, docx, txt}").
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 
-_CONTROL_CHARS_RE = re.compile(r"[^\x20-\x7E\n\t]")
 _WHITESPACE_RE = re.compile(r"[ \t]+")
 
 _SYSTEM_PROMPT = (
@@ -97,17 +102,16 @@ class ExtractedResumeProfile(BaseModel):
 
 
 def extract_text(file_name: str, content: bytes) -> str:
-    """Best-effort text extraction, dependency-light by design.
+    """Real structural text extraction per file type.
 
-    `.txt` is a direct UTF-8 decode. `.pdf`/`.docx` fall back to decoding
-    the raw bytes and stripping non-printable/control bytes rather than a
-    real structural parse: `pyproject.toml` does not (yet) declare a
-    PDF/DOCX parsing library (e.g. `pypdf`, `python-docx`) as a dependency
-    for this component, and the brief for this pass is to "keep extraction
-    pragmatic rather than adding a new dependency". This is good enough to
-    hand usable prose through to the LLM extraction step for typical
-    text-heavy resumes; swapping in a real parser later is an additive,
-    isolated change to this one function.
+    `.txt` is a direct UTF-8 decode. `.pdf` uses `pypdf` (per-page text,
+    joined). `.docx` uses `python-docx` (paragraph text, joined). Both
+    replace an earlier placeholder that raw-decoded the file's bytes as
+    UTF-8: PDF/DOCX are binary formats (compressed streams, XML container
+    structure), so that produced unusable noise instead of the resume's
+    actual prose — invisible while Ollama was failing outright on
+    timeouts/schema-echoing, only surfaced once a provider swap (Gemini)
+    started returning clean, fast responses built from that noise.
     """
     suffix = Path(file_name).suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
@@ -118,14 +122,40 @@ def extract_text(file_name: str, content: bytes) -> str:
 
     if suffix == ".txt":
         text = content.decode("utf-8", errors="replace")
+    elif suffix == ".pdf":
+        text = _extract_pdf_text(content)
     else:
-        text = content.decode("utf-8", errors="ignore")
-        text = _CONTROL_CHARS_RE.sub(" ", text)
+        text = _extract_docx_text(content)
 
     text = _WHITESPACE_RE.sub(" ", text).strip()
     if not text:
         raise ResumeParsingError(ErrorCode.RESUME_PARSE_FAILED, "extracted text is empty")
+
+    logger.info(
+        "Resume text extracted | %s",
+        format_context(file_name=file_name, file_type=suffix, chars=len(text)),
+    )
     return text
+
+
+def _extract_pdf_text(content: bytes) -> str:
+    try:
+        reader = PdfReader(io.BytesIO(content))
+        pages = [page.extract_text() or "" for page in reader.pages]
+    except Exception as exc:
+        raise ResumeParsingError(ErrorCode.RESUME_PARSE_FAILED, f"could not read PDF: {exc}") from exc
+    logger.info("PDF text extracted | %s", format_context(pages=len(pages)))
+    return "\n\n".join(pages)
+
+
+def _extract_docx_text(content: bytes) -> str:
+    try:
+        document = Document(io.BytesIO(content))
+        paragraphs = [p.text for p in document.paragraphs]
+    except Exception as exc:
+        raise ResumeParsingError(ErrorCode.RESUME_PARSE_FAILED, f"could not read DOCX: {exc}") from exc
+    logger.info("DOCX text extracted | %s", format_context(paragraphs=len(paragraphs)))
+    return "\n".join(paragraphs)
 
 
 def _build_extraction_prompt(raw_text: str) -> str:
@@ -269,15 +299,39 @@ def extract_profile_fields(raw_text: str, *, client: LLMClient) -> ExtractedResu
     for this workflow.
     """
     prompt = _build_extraction_prompt(raw_text)
+    logger.info(
+        "LLM extraction started | %s",
+        format_context(resume_text_chars=len(raw_text), prompt_chars=len(prompt)),
+    )
     try:
-        return client.complete_structured(prompt, ExtractedResumeProfile, system=_SYSTEM_PROMPT)
+        fields = client.complete_structured(prompt, ExtractedResumeProfile, system=_SYSTEM_PROMPT)
     except LLMProviderError as exc:
         code = (
             ErrorCode.RESUME_PARSE_FAILED
             if exc.reason in _STRUCTURED_OUTPUT_FAILURE_REASONS
             else ErrorCode.LLM_PROVIDER_ERROR
         )
+        logger.error(
+            "LLM extraction failed | %s",
+            format_context(
+                reason=exc.reason.value,
+                attempts=exc.attempts,
+                raw_text=excerpt(exc.raw_text) if exc.raw_text else None,
+            ),
+        )
         raise ResumeParsingError(code, str(exc)) from exc
+
+    logger.info(
+        "LLM extraction succeeded | %s",
+        format_context(
+            title=fields.title,
+            skills=len(fields.skills),
+            education=len(fields.education),
+            certifications=len(fields.certifications),
+            projects=len(fields.projects),
+        ),
+    )
+    return fields
 
 
 async def parse_resume(

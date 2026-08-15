@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_MODEL = "llama3"
+DEFAULT_PROVIDER = "ollama"
+DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 
 
 class LLMCallOptions(BaseModel):
@@ -32,8 +34,16 @@ class LLMCallOptions(BaseModel):
 class LLMConfig(BaseModel):
     """Layer-wide defaults, resolved once at construction."""
 
+    provider: str = DEFAULT_PROVIDER
+    """Which `LLMProvider` implementation `LLMClient` builds when none is
+    injected: `"ollama"` (default, local-first per about_project.md) or
+    `"gemini"` (deployment-scoped override — see `gemini_provider.py`)."""
+
     host: str = DEFAULT_HOST
     model: str = DEFAULT_MODEL
+    api_key: str | None = None
+    """Vendor API key. Unused by `OllamaProvider`; required by `GeminiProvider`."""
+
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     """Defaults to 0.0: every current consumer does extraction, scoring, or
     structured generation, where reproducibility beats variety."""
@@ -56,6 +66,19 @@ class LLMConfig(BaseModel):
             raw = source.get(key)
             if raw is not None and raw != "":
                 values[field] = raw
+
+        # `model` is resolved separately, keyed off `provider`: each vendor
+        # names models differently, and `OLLAMA_MODEL` staying set in `.env`
+        # while switching to `gemini` shouldn't leak an Ollama model name
+        # into a Gemini call.
+        provider = values.get("provider", DEFAULT_PROVIDER)
+        if provider == "gemini":
+            values["model"] = source.get("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        else:
+            model = source.get("OLLAMA_MODEL")
+            if model:
+                values["model"] = model
+
         return cls.model_validate(values)
 
     def merged(self, options: LLMCallOptions | None) -> LLMConfig:
@@ -66,8 +89,9 @@ class LLMConfig(BaseModel):
 
 
 _ENV_KEYS = {
+    "provider": "LLM_PROVIDER",
     "host": "OLLAMA_HOST",
-    "model": "OLLAMA_MODEL",
+    "api_key": "GEMINI_API_KEY",
     "temperature": "LLM_TEMPERATURE",
     "timeout_seconds": "LLM_TIMEOUT_SECONDS",
     "max_attempts": "LLM_MAX_ATTEMPTS",
@@ -75,4 +99,4 @@ _ENV_KEYS = {
 }
 
 
-__all__ = ["DEFAULT_HOST", "DEFAULT_MODEL", "LLMCallOptions", "LLMConfig"]
+__all__ = ["DEFAULT_GEMINI_MODEL", "DEFAULT_HOST", "DEFAULT_MODEL", "DEFAULT_PROVIDER", "LLMCallOptions", "LLMConfig"]

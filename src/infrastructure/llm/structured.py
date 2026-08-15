@@ -200,8 +200,14 @@ def repair_prompt(original_prompt: str, raw_response: str, problem: str) -> str:
 
 
 def _default_provider(config: LLMConfig) -> LLMProvider:
-    # Imported lazily to avoid a module-load-time dependency on the `ollama`
-    # SDK for callers that always inject their own provider (e.g. tests).
+    # Imported lazily to avoid a module-load-time dependency on the
+    # `ollama`/`google-genai` SDKs for callers that always inject their own
+    # provider (e.g. tests).
+    if config.provider == "gemini":
+        from infrastructure.llm.gemini_provider import GeminiProvider
+
+        return GeminiProvider(config=config)
+
     from infrastructure.llm.ollama_provider import OllamaProvider
 
     return OllamaProvider(config=config)

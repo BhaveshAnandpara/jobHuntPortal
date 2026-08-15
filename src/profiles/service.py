@@ -178,7 +178,10 @@ class ProfileService:
             return None
 
         started = time.monotonic()
-        logger.info("Resume parsing started | %s", format_context(resume_id=resume_id))
+        logger.info(
+            "Resume parsing started | %s",
+            format_context(resume_id=resume_id, file_name=resume.file_name),
+        )
 
         try:
             if self._llm_client is None:
@@ -186,6 +189,10 @@ class ProfileService:
                     ErrorCode.LLM_PROVIDER_ERROR, "no LLM client is configured"
                 )
             file_content = self._storage.read(resume.storage_uri)
+            logger.info(
+                "Resume file read from storage | %s",
+                format_context(resume_id=resume_id, bytes=len(file_content)),
+            )
             raw_text, profile = await parse_resume(
                 resume,
                 client=self._llm_client,

@@ -183,6 +183,21 @@ cd frontend && npm test         # frontend unit tests
 cd frontend && npm run e2e      # frontend end-to-end tests
 ```
 
+## Resetting local data
+
+To wipe all data and exercise the system manually as if it were a fresh
+install (tables stay, rows don't):
+
+```
+python scripts/reset_db.py
+```
+
+Prompts for confirmation (type `reset`) and prints exactly which database
+and tables it's about to truncate. Pass `--yes` to skip the prompt, and
+`--with-files` to also delete uploaded resume files under `data/resumes/`
+(these live on disk, not in the database, so a DB-only reset leaves them
+behind as harmless orphans).
+
 ## Project layout
 
 See [docs/architecture/repository-structure.md](docs/architecture/repository-structure.md)
