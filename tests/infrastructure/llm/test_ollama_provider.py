@@ -76,11 +76,10 @@ def test_complete_maps_request_fields_and_normalizes_response():
     assert response.completion_tokens == 34
 
     # Request mapped correctly: system+user messages, model, temperature,
-    # and a request.response_schema translated to Ollama's generic
-    # `format="json"` constraint rather than passed through as a full
-    # grammar (see ollama_provider.py's `complete()` for why: full-schema
-    # grammar-constrained decoding reproducibly hangs small models like
-    # llama3.2:1b on schemas with optional/nullable fields).
+    # and request.response_schema passed through as Ollama's grammar-
+    # constrained `format=<json_schema>` (structurally forces the output
+    # shape rather than just requesting "some valid JSON") — see
+    # ollama_provider.py's `complete()`.
     sent = fake_client.last_call_kwargs
     assert sent["model"] == "llama3"
     assert sent["messages"] == [
@@ -88,7 +87,7 @@ def test_complete_maps_request_fields_and_normalizes_response():
         {"role": "user", "content": "describe the widget"},
     ]
     assert sent["options"] == {"temperature": 0.2}
-    assert sent["format"] == "json"
+    assert sent["format"] == {"type": "object"}
 
     # Timeout/host resolved from LLMConfig.host and the per-request timeout.
     assert factory.calls == [("http://myhost:11434", 15.0)]

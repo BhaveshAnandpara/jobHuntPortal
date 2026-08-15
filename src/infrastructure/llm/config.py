@@ -1,12 +1,15 @@
 """Model and behavior configuration for the LLM Provider Layer.
 
-Defaults are local-first per about_project.md's technology table (Ollama,
-"capable of running locally with minimal cost"), and `from_env` reads the
-`OLLAMA_HOST` / `OLLAMA_MODEL` names already declared in `.env.example`.
+`provider` selects which `LLMProvider` `LLMClient` builds by default: Groq
+(primary — fast, free-tier, native JSON-schema structured output), Gemini
+(alternative cloud provider), or Ollama (local alternative, local-first per
+about_project.md's technology table). `from_env` resolves `model`/`api_key`
+per-provider — see its own docstring — from the matching `GROQ_*`/
+`GEMINI_*`/`OLLAMA_*` names declared in `.env.example`.
 
 `LLMCallOptions` is the per-call override callers pass. It carries no
-vendor-specific field, so selecting a model or temperature never drags an
-Ollama type into a domain component's signature.
+vendor-specific field, so selecting a model or temperature never drags a
+provider-specific type into a domain component's signature.
 """
 
 from __future__ import annotations
@@ -18,8 +21,13 @@ from pydantic import BaseModel, Field
 
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_MODEL = "llama3"
-DEFAULT_PROVIDER = "ollama"
+DEFAULT_PROVIDER = "groq"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
+"""`llama-3.3-70b-versatile` (an earlier default) turned out not to support
+Groq's `json_schema` structured-output mode at all — every structured call
+failed with a 400. Confirmed working via a direct API check against
+console.groq.com/docs/structured-outputs#supported-models."""
 
 
 class LLMCallOptions(BaseModel):
@@ -36,13 +44,16 @@ class LLMConfig(BaseModel):
 
     provider: str = DEFAULT_PROVIDER
     """Which `LLMProvider` implementation `LLMClient` builds when none is
-    injected: `"ollama"` (default, local-first per about_project.md) or
-    `"gemini"` (deployment-scoped override — see `gemini_provider.py`)."""
+    injected: `"groq"` (default/primary — fast, free-tier, native
+    JSON-schema support, see `groq_provider.py`), `"gemini"` (alternative
+    cloud provider — see `gemini_provider.py`), or `"ollama"` (local
+    alternative, local-first per about_project.md — see
+    `ollama_provider.py`)."""
 
     host: str = DEFAULT_HOST
     model: str = DEFAULT_MODEL
     api_key: str | None = None
-    """Vendor API key. Unused by `OllamaProvider`; required by `GeminiProvider`."""
+    """Vendor API key. Unused by `OllamaProvider`; required by `GroqProvider`/`GeminiProvider`."""
 
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     """Defaults to 0.0: every current consumer does extraction, scoring, or
@@ -67,17 +78,23 @@ class LLMConfig(BaseModel):
             if raw is not None and raw != "":
                 values[field] = raw
 
-        # `model` is resolved separately, keyed off `provider`: each vendor
-        # names models differently, and `OLLAMA_MODEL` staying set in `.env`
-        # while switching to `gemini` shouldn't leak an Ollama model name
-        # into a Gemini call.
+        # `model` and `api_key` are resolved separately, keyed off
+        # `provider`: each vendor names models (and reads its key from a
+        # different env var) differently, and e.g. `OLLAMA_MODEL` staying
+        # set in `.env` while switching to `gemini`/`groq` shouldn't leak an
+        # Ollama model name into that provider's call.
         provider = values.get("provider", DEFAULT_PROVIDER)
-        if provider == "gemini":
+        if provider == "groq":
+            values["model"] = source.get("GROQ_MODEL") or DEFAULT_GROQ_MODEL
+            values["api_key"] = source.get("GROQ_API_KEY")
+        elif provider == "gemini":
             values["model"] = source.get("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+            values["api_key"] = source.get("GEMINI_API_KEY")
         else:
             model = source.get("OLLAMA_MODEL")
             if model:
                 values["model"] = model
+            values.pop("api_key", None)
 
         return cls.model_validate(values)
 
@@ -91,7 +108,6 @@ class LLMConfig(BaseModel):
 _ENV_KEYS = {
     "provider": "LLM_PROVIDER",
     "host": "OLLAMA_HOST",
-    "api_key": "GEMINI_API_KEY",
     "temperature": "LLM_TEMPERATURE",
     "timeout_seconds": "LLM_TIMEOUT_SECONDS",
     "max_attempts": "LLM_MAX_ATTEMPTS",
@@ -99,4 +115,12 @@ _ENV_KEYS = {
 }
 
 
-__all__ = ["DEFAULT_GEMINI_MODEL", "DEFAULT_HOST", "DEFAULT_MODEL", "DEFAULT_PROVIDER", "LLMCallOptions", "LLMConfig"]
+__all__ = [
+    "DEFAULT_GEMINI_MODEL",
+    "DEFAULT_GROQ_MODEL",
+    "DEFAULT_HOST",
+    "DEFAULT_MODEL",
+    "DEFAULT_PROVIDER",
+    "LLMCallOptions",
+    "LLMConfig",
+]

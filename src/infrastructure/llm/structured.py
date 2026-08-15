@@ -12,12 +12,15 @@ was JSON that doesn't fit the schema (`SCHEMA_VALIDATION_FAILED`).
 drives up to `LLMConfig.repair_attempts` re-prompts for structured-output
 failures (a different retry budget on purpose — see
 `LLMFailureReason.retryable`). A caller that doesn't inject a provider gets
-the local-first default (`OllamaProvider` built from `LLMConfig.from_env()`).
+whichever `LLMProvider` `LLMConfig.from_env()`'s `provider` field selects —
+`"groq"` (default/primary), `"gemini"`, or `"ollama"` (local-first fallback
+per about_project.md) — see `_default_provider()`.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import time
 from types import UnionType
 from typing import TypeVar, Union, get_args, get_origin
@@ -29,6 +32,9 @@ from infrastructure.llm.errors import LLMFailureReason, LLMProviderError, excerp
 from infrastructure.llm.provider import LLMProvider, LLMRequest
 
 T = TypeVar("T", bound=BaseModel)
+
+logger = logging.getLogger("src.infrastructure.llm.structured")
+logging.basicConfig(level=logging.INFO, format="[src-infrastructure] %(message)s")
 
 
 def schema_instructions(schema: type[BaseModel]) -> str:
@@ -201,8 +207,13 @@ def repair_prompt(original_prompt: str, raw_response: str, problem: str) -> str:
 
 def _default_provider(config: LLMConfig) -> LLMProvider:
     # Imported lazily to avoid a module-load-time dependency on the
-    # `ollama`/`google-genai` SDKs for callers that always inject their own
-    # provider (e.g. tests).
+    # `groq`/`google-genai`/`ollama` SDKs for callers that always inject
+    # their own provider (e.g. tests).
+    if config.provider == "groq":
+        from infrastructure.llm.groq_provider import GroqProvider
+
+        return GroqProvider(config=config)
+
     if config.provider == "gemini":
         from infrastructure.llm.gemini_provider import GeminiProvider
 
@@ -242,40 +253,89 @@ class LLMClient:
         system: str | None = None,
         options: LLMCallOptions | None = None,
     ) -> T:
-        """Run `prompt`, returning a validated `schema` instance.
+        """Run prompt and return a validated schema instance.
 
-        Re-prompts (repair) on structured-output failures up to
-        `LLMConfig.repair_attempts` times, showing the model its previous
-        malformed answer and why it was rejected. Transport-level failures
-        (timeout, connection error, provider error) are retried separately,
-        inside each individual call, per `LLMConfig.max_attempts` — they are
-        not repair rounds and do not consume the repair budget.
+        Two independent retry mechanisms exist:
+
+        1. Transport retries:
+        Handled by `_call_with_retry`.
+        Used for retryable provider/network failures such as timeout,
+        connection errors, and HTTP 429.
+
+        2. Structured-output repair:
+        Handled here.
+        Used only when the provider successfully responds but the response
+        cannot be validated against the requested schema.
+
+        Transport retries do not consume the structured-output repair budget.
         """
+
         cfg = self._config.merged(options)
         response_schema = schema.model_json_schema()
-        base_prompt = f"{prompt}\n\n{schema_instructions(schema)}"
+
+        base_prompt = (
+            f"{prompt}\n\n"
+            f"{schema_instructions(schema)}"
+        )
+
         current_prompt = base_prompt
         last_error: LLMProviderError | None = None
 
-        for repair_round in range(cfg.repair_attempts + 1):
-            text = self._call_with_retry(current_prompt, system, cfg, response_schema)
+        total_repair_rounds = cfg.repair_attempts + 1
+
+        for repair_round in range(1, total_repair_rounds + 1):
+            logger.info(
+                "Structured LLM request | provider=%s model=%s "
+                "repair_round=%d/%d",
+                self._provider.name,
+                cfg.model,
+                repair_round,
+                total_repair_rounds,
+            )
+
+            # Any transport retries happen internally here.
+            text = self._call_with_retry(
+                current_prompt,
+                system,
+                cfg,
+                response_schema,
+            )
+
             try:
                 return parse_structured(
                     text,
                     schema,
                     provider=self._provider.name,
                     model=cfg.model,
-                    attempts=repair_round + 1,
+                    attempts=repair_round,
                 )
+
             except LLMProviderError as exc:
                 last_error = exc
-                if repair_round >= cfg.repair_attempts:
-                    raise
-                current_prompt = repair_prompt(base_prompt, text, exc.message)
 
-        # Unreachable: the loop above always either returns or raises on its
-        # final iteration.
+                logger.warning(
+                    "Structured output validation failed | "
+                    "provider=%s model=%s repair_round=%d/%d "
+                    "error_code=%s",
+                    self._provider.name,
+                    cfg.model,
+                    repair_round,
+                    total_repair_rounds,
+                    exc.error_code.value,
+                )
+
+                if repair_round >= total_repair_rounds:
+                    raise
+
+                current_prompt = repair_prompt(
+                    base_prompt,
+                    text,
+                    exc.message,
+                )
+
+        # Defensive only — the loop always returns or raises.
         raise last_error  # pragma: no cover
+
 
     def _call_with_retry(
         self,
@@ -285,7 +345,8 @@ class LLMClient:
         response_schema: dict,
     ) -> str:
         last_error: LLMProviderError | None = None
-        for attempt in range(1, cfg.max_attempts + 1):
+
+        for transport_attempt in range(1, cfg.max_attempts + 1):
             request = LLMRequest(
                 prompt=prompt,
                 system=system,
@@ -294,19 +355,56 @@ class LLMClient:
                 timeout_seconds=cfg.timeout_seconds,
                 response_schema=response_schema,
             )
+
             try:
+                logger.info(
+                    "LLM request started | provider=%s model=%s "
+                    "transport_attempt=%d/%d",
+                    self._provider.name,
+                    cfg.model,
+                    transport_attempt,
+                    cfg.max_attempts,
+                )
+
                 return self._provider.complete(request).text
+
             except LLMProviderError as exc:
                 last_error = exc
-                if not exc.retryable or attempt >= cfg.max_attempts:
+
+                logger.warning(
+                    "LLM request failed | provider=%s model=%s "
+                    "transport_attempt=%d/%d retryable=%s "
+                    "retry_after_seconds=%s error_code=%s",
+                    self._provider.name,
+                    cfg.model,
+                    transport_attempt,
+                    cfg.max_attempts,
+                    exc.retryable,
+                    cfg.retry_backoff_seconds,
+                    exc.error_code.value,
+                )
+
+                # Permanent error or retry budget exhausted.
+                if not exc.retryable or transport_attempt >= cfg.max_attempts:
                     raise
-                if cfg.retry_backoff_seconds > 0:
-                    time.sleep(cfg.retry_backoff_seconds * (2 ** (attempt - 1)))
 
-        # Unreachable: max_attempts >= 1 guarantees either a return or a
-        # raise inside the loop above.
+                sleep_seconds = cfg.retry_backoff_seconds * (2 ** (transport_attempt - 1))
+
+                if sleep_seconds > 0:
+                    logger.info(
+                        "LLM retry scheduled | provider=%s model=%s "
+                        "transport_attempt=%d/%d wait_seconds=%.2f",
+                        self._provider.name,
+                        cfg.model,
+                        transport_attempt,
+                        cfg.max_attempts,
+                        sleep_seconds,
+                    )
+
+                    time.sleep(sleep_seconds)
+
+        # Defensive only — the loop always returns or raises.
         raise last_error  # pragma: no cover
-
 
 __all__ = [
     "LLMClient",

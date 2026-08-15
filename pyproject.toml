@@ -21,6 +21,7 @@ dependencies = [
     "beautifulsoup4",
     "ollama",
     "google-genai",
+    "groq",
     "pypdf",
     "python-docx",
     "streamlit",

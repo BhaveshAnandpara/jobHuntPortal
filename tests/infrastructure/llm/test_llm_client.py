@@ -165,10 +165,27 @@ def test_non_retryable_transport_error_is_not_retried():
     assert provider.call_count == 1
 
 
-def test_default_provider_is_ollama_when_none_injected():
+def test_default_provider_is_groq_when_none_injected():
+    """Groq is the primary/default provider — `LLMConfig.provider` defaults
+    to `"groq"`, so a caller that injects neither a provider nor an
+    explicit `provider=` gets `GroqProvider`."""
+    from infrastructure.llm.groq_provider import GroqProvider
+
+    client = LLMClient(config=fast_config(api_key="gsk_test"))
+    assert isinstance(client.provider, GroqProvider)
+
+
+def test_default_provider_is_gemini_when_configured():
+    from infrastructure.llm.gemini_provider import GeminiProvider
+
+    client = LLMClient(config=fast_config(provider="gemini", api_key="gem_test"))
+    assert isinstance(client.provider, GeminiProvider)
+
+
+def test_default_provider_is_ollama_when_configured():
     from infrastructure.llm.ollama_provider import OllamaProvider
 
-    client = LLMClient(config=fast_config())
+    client = LLMClient(config=fast_config(provider="ollama"))
     assert isinstance(client.provider, OllamaProvider)
 
 

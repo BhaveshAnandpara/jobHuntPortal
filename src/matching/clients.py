@@ -28,6 +28,7 @@ import os
 
 import httpx
 
+from infrastructure.auth import create_access_token
 from shared.types.domain.user_preferences import UserPreferences
 from shared.types.dto import ResumeProfile
 from shared.types.ids import UserId
@@ -36,8 +37,24 @@ DEFAULT_BASE_URL = "http://localhost:8000"
 _REQUEST_TIMEOUT_SECONDS = 10.0
 
 
+def _auth_headers(user_id: UserId) -> dict[str, str]:
+    """Every route these clients call resolves identity from a bearer
+    token (`CurrentUserIdDependency`), not a path/query `user_id` — there
+    is no separate service-to-service auth concept in this codebase. A
+    backend caller acting on behalf of `user_id` (no end-user session of
+    its own) mints a token the same way `users/service.py` does at login,
+    via the same shared `infrastructure.auth.create_access_token`."""
+    return {"Authorization": f"Bearer {create_access_token(user_id)}"}
+
+
 class UserPreferencesClient:
-    """`GET /users/{user_id}/preferences` — api-contracts.md#user-service."""
+    """`GET /users/me/preferences` — api-contracts.md#user-service.
+
+    Despite the name, there is no `/users/{user_id}/preferences` route —
+    every user-service route derives identity from the bearer token (see
+    `_auth_headers`), so the target user is selected by which token is
+    minted, not by the URL.
+    """
 
     def __init__(
         self,
@@ -58,17 +75,18 @@ class UserPreferencesClient:
         neutral default `UserPreferences` for this case instead of failing
         the whole match (see that module's docstring).
         """
-        response = await self._get(f"{self._base_url}/users/{user_id}/preferences")
+        response = await self._get(f"{self._base_url}/users/me/preferences", user_id)
         if response.status_code == httpx.codes.NOT_FOUND:
             return None
         response.raise_for_status()
         return UserPreferences.model_validate(response.json())
 
-    async def _get(self, url: str) -> httpx.Response:
+    async def _get(self, url: str, user_id: UserId) -> httpx.Response:
+        headers = _auth_headers(user_id)
         if self._client is not None:
-            return await self._client.get(url, timeout=self._timeout)
+            return await self._client.get(url, headers=headers, timeout=self._timeout)
         async with httpx.AsyncClient() as client:
-            return await client.get(url, timeout=self._timeout)
+            return await client.get(url, headers=headers, timeout=self._timeout)
 
 
 class ProfileServiceClient:
@@ -94,17 +112,16 @@ class ProfileServiceClient:
         self._timeout = timeout
 
     async def list_profiles(self, user_id: UserId) -> list[ResumeProfile]:
-        response = await self._get(
-            f"{self._base_url}/profiles", params={"user_id": str(user_id)}
-        )
+        response = await self._get(f"{self._base_url}/profiles", user_id)
         response.raise_for_status()
         return [ResumeProfile.model_validate(item) for item in response.json()]
 
-    async def _get(self, url: str, *, params: dict[str, str]) -> httpx.Response:
+    async def _get(self, url: str, user_id: UserId) -> httpx.Response:
+        headers = _auth_headers(user_id)
         if self._client is not None:
-            return await self._client.get(url, params=params, timeout=self._timeout)
+            return await self._client.get(url, headers=headers, timeout=self._timeout)
         async with httpx.AsyncClient() as client:
-            return await client.get(url, params=params, timeout=self._timeout)
+            return await client.get(url, headers=headers, timeout=self._timeout)
 
 
 __all__ = ["DEFAULT_BASE_URL", "ProfileServiceClient", "UserPreferencesClient"]

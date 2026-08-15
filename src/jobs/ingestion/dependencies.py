@@ -7,7 +7,6 @@ never requires a configured database/broker/LLM — the same pattern
 `users/api/dependencies.py` uses.
 """
 
-import os
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Annotated
 
@@ -21,18 +20,6 @@ from jobs.repository import JobRepository
 
 if TYPE_CHECKING:
     from infrastructure.llm.structured import LLMClient
-
-_EXTRACTION_MODEL = os.environ.get("JOB_EXTRACTION_MODEL", "llama3.2:3b")
-"""Job-posting extraction asks a small local model to correctly fill several
-fields from a multi-section page in one pass — a harder task than most other
-LLM Provider Layer callers ask of `LLMConfig.model`'s process-wide default
-(`OLLAMA_MODEL`, `llama3.2:1b` here, sized for this machine's modest
-hardware). `LLMCallOptions.model` — an existing per-call override seam
-`LLMConfig.merged()` already supports but nothing previously used — lets
-this one call site opt into a larger model without moving every other
-caller (job matching's scoring, contact ranking, outreach generation) onto
-the slower default. Override via `JOB_EXTRACTION_MODEL` if the pulled model
-name differs."""
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
@@ -86,19 +73,18 @@ class _LLMClientExtractor:
     of its own. `LLMClient` already owns retries, structured-output repair
     prompting, and error normalization (`infrastructure.llm.structured`).
 
-    Also pins this call to `_EXTRACTION_MODEL` (see its own docstring) via
-    `LLMCallOptions`, rather than `LLMConfig.model`'s process-wide default.
+    Uses `LLMConfig.model`'s process-wide default (one model, set once via
+    env) rather than a per-call override — a prior per-call
+    `LLMCallOptions.model` pin to a specific Ollama model name broke once
+    the configured provider switched to Gemini, since that name isn't a
+    valid Gemini model.
     """
 
     def __init__(self, client: "LLMClient") -> None:
         self._client = client
 
     async def extract(self, prompt: str, schema: type[BaseModel]) -> BaseModel:
-        from infrastructure.llm.config import LLMCallOptions
-
-        return self._client.complete_structured(
-            prompt, schema, options=LLMCallOptions(model=_EXTRACTION_MODEL)
-        )
+        return self._client.complete_structured(prompt, schema)
 
 
 def get_structured_extractor() -> StructuredExtractor:

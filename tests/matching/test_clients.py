@@ -1,7 +1,12 @@
-"""Tests for `jobs.discovery.clients` — the runtime API clients for Job
-Discovery Service's two documented dependencies (User Service preferences,
+"""Tests for `matching.clients` — the runtime API clients for Job Matching
+Service's two documented dependencies (User Service preferences,
 Resume/Profile Service profiles). Uses `httpx.MockTransport`, no live
 services required.
+
+Mirrors `tests/jobs/discovery/test_clients.py` (jobs.discovery.clients has
+the identical shape); this component can't import that module directly
+(no cross-component imports), so the client class — and its tests — are a
+separate copy.
 """
 
 from datetime import UTC, datetime
@@ -11,15 +16,18 @@ import httpx
 import pytest
 
 from infrastructure.auth import decode_access_token
-from jobs.discovery.clients import ProfileServiceClient, UserPreferencesClient
+from matching.clients import ProfileServiceClient, UserPreferencesClient
 from shared.types.enums import ProfileStatus, RemoteWorkPreference
 from shared.types.ids import UserId
 
 
 def _bearer_user_id(request: httpx.Request) -> UserId:
-    """Decode the `Authorization: Bearer <token>` header these clients now
-    attach, proving it's a real, verifiable token for `user_id` — not just
-    that some string was sent."""
+    """Decode the `Authorization: Bearer <token>` header these clients
+    attach, proving it's a real, verifiable token for `user_id` — every
+    route they call resolves identity from this token, not a path/query
+    `user_id` (there is no service-to-service auth concept in this
+    codebase; a backend caller with no end-user session mints one the same
+    way `users/service.py` does at login)."""
     scheme, _, token = request.headers["authorization"].partition(" ")
     assert scheme == "Bearer"
     return decode_access_token(token)
@@ -29,9 +37,9 @@ def _preferences_payload(user_id: str) -> dict:
     return {
         "id": str(uuid4()),
         "user_id": user_id,
-        "target_roles": ["Mechanical Engineer"],
-        "target_locations": ["Berlin"],
-        "remote_preference": RemoteWorkPreference.HYBRID.value,
+        "target_roles": ["Backend Engineer"],
+        "target_locations": ["Remote"],
+        "remote_preference": RemoteWorkPreference.REMOTE.value,
         "excluded_companies": [],
         "min_salary": None,
         "salary_currency": None,
@@ -44,9 +52,9 @@ def _profile_payload(user_id: str) -> dict:
         "profile_id": str(uuid4()),
         "resume_id": str(uuid4()),
         "user_id": user_id,
-        "title": "Mechanical Engineer",
-        "skills": ["CAD"],
-        "target_roles": ["Design Engineer"],
+        "title": "Backend Engineer",
+        "skills": ["Python"],
+        "target_roles": ["Senior Backend Engineer"],
         "status": ProfileStatus.ACTIVE.value,
     }
 
@@ -65,8 +73,8 @@ async def test_get_preferences_returns_parsed_model() -> None:
         preferences = await client.get_preferences(user_id)
 
     assert preferences is not None
-    assert preferences.target_roles == ["Mechanical Engineer"]
-    assert preferences.remote_preference is RemoteWorkPreference.HYBRID
+    assert preferences.target_roles == ["Backend Engineer"]
+    assert preferences.remote_preference is RemoteWorkPreference.REMOTE
 
 
 @pytest.mark.asyncio
@@ -110,7 +118,7 @@ async def test_list_profiles_returns_parsed_models() -> None:
         profiles = await client.list_profiles(user_id)
 
     assert len(profiles) == 1
-    assert profiles[0].skills == ["CAD"]
+    assert profiles[0].skills == ["Python"]
     assert profiles[0].status is ProfileStatus.ACTIVE
 
 
