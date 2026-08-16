@@ -7,11 +7,17 @@ browser binaries not being installed in this environment.
 
 import asyncio
 
+import httpx
 import pytest
 
 from infrastructure.external.config import ExternalClientConfig, RetryPolicy
 from infrastructure.external.errors import InvalidUrlError, PageFetchError
-from infrastructure.external.page_fetch import FetchedPage, PageFetchClient
+from infrastructure.external.page_fetch import (
+    FetchedPage,
+    PageFetchClient,
+    StaticHttpRenderer,
+    is_meaningful_content,
+)
 
 
 class _FakeRenderer:
@@ -199,3 +205,209 @@ async def test_fetch_page_raises_same_errors_as_fetch():
 
     with pytest.raises(PageFetchError):
         await client.fetch_page("https://jobs.example.com/broken")
+
+
+# ---------------------------------------------------------------------------
+# Static-first, Chromium-fallback strategy
+# ---------------------------------------------------------------------------
+
+# A real-looking static job posting: long, and far more text than the title.
+_MEANINGFUL_HTML = f"""
+<html>
+  <head><title>Backend Engineer at Acme</title></head>
+  <body>
+    <h1>Backend Engineer</h1>
+    <p>{"We build distributed systems that scale. " * 10}</p>
+  </body>
+</html>
+"""
+
+# An SPA shell: page.example.com's actual pattern — a generic title, an
+# empty app div, no real posting content anywhere in the static HTML.
+_SPA_SHELL_HTML = """
+<html>
+  <head><title>JPMC Candidate Experience page</title></head>
+  <body><div id="app"></div></body>
+</html>
+"""
+
+_RENDERED_WITH_MAIN_HTML = f"""
+<html>
+  <head><title>Backend Engineer at Acme</title></head>
+  <body>
+    <nav>Home | Jobs | About</nav>
+    <main><h1>Backend Engineer</h1><p>{"We build distributed systems that scale. " * 10}</p></main>
+    <footer>Copyright Acme</footer>
+  </body>
+</html>
+"""
+
+_RENDERED_NO_MAIN_HTML = f"""
+<html>
+  <head><title>Backend Engineer at Acme</title></head>
+  <body><h1>Backend Engineer</h1><p>{"We build distributed systems that scale. " * 10}</p></body>
+</html>
+"""
+
+
+def test_is_meaningful_content_matches_the_spa_shell_example():
+    # The exact motivating example from the task brief.
+    assert is_meaningful_content("JPMC Candidate Experience page", "JPMC Candidate Experience page") is False
+    assert is_meaningful_content(("We build distributed systems that scale. " * 10), "Backend Engineer") is True
+
+
+@pytest.mark.asyncio
+async def test_a_meaningful_static_content_never_calls_fallback():
+    static = _FakeRenderer(html=_MEANINGFUL_HTML, name="static")
+    fallback = _FakeRenderer(html=_RENDERED_WITH_MAIN_HTML, name="browser")
+    client = PageFetchClient(static, FAST_CONFIG, fallback_renderer=fallback)
+
+    page = await client.fetch("https://jobs.example.com/real-posting")
+
+    assert "distributed systems" in page.text
+    assert fallback.calls == []
+
+
+@pytest.mark.asyncio
+async def test_b_spa_shell_static_content_triggers_fallback():
+    static = _FakeRenderer(html=_SPA_SHELL_HTML, name="static")
+    fallback = _FakeRenderer(html=_RENDERED_WITH_MAIN_HTML, name="browser")
+    client = PageFetchClient(static, FAST_CONFIG, fallback_renderer=fallback)
+
+    await client.fetch("https://jobs.example.com/spa-shell")
+
+    assert fallback.calls == ["https://jobs.example.com/spa-shell"]
+
+
+@pytest.mark.asyncio
+async def test_b_static_error_also_triggers_fallback():
+    static = _FakeRenderer(error=RuntimeError("connection reset"), name="static")
+    fallback = _FakeRenderer(html=_RENDERED_WITH_MAIN_HTML, name="browser")
+    client = PageFetchClient(static, FAST_CONFIG, fallback_renderer=fallback)
+
+    page = await client.fetch("https://jobs.example.com/static-down")
+
+    assert fallback.calls == ["https://jobs.example.com/static-down"]
+    assert "distributed systems" in page.text
+
+
+@pytest.mark.asyncio
+async def test_c_rendered_main_text_is_returned():
+    static = _FakeRenderer(html=_SPA_SHELL_HTML, name="static")
+    fallback = _FakeRenderer(html=_RENDERED_WITH_MAIN_HTML, name="browser")
+    client = PageFetchClient(static, FAST_CONFIG, fallback_renderer=fallback)
+
+    page = await client.fetch("https://jobs.example.com/spa-shell")
+
+    assert "Backend Engineer" in page.text
+    assert "distributed systems" in page.text
+    # nav/footer chrome outside <main> must not leak into the result.
+    assert "Home | Jobs | About" not in page.text
+    assert "Copyright Acme" not in page.text
+
+
+@pytest.mark.asyncio
+async def test_d_no_main_element_falls_back_to_body_text():
+    static = _FakeRenderer(html=_SPA_SHELL_HTML, name="static")
+    fallback = _FakeRenderer(html=_RENDERED_NO_MAIN_HTML, name="browser")
+    client = PageFetchClient(static, FAST_CONFIG, fallback_renderer=fallback)
+
+    page = await client.fetch("https://jobs.example.com/spa-shell-no-main")
+
+    assert "Backend Engineer" in page.text
+    assert "distributed systems" in page.text
+
+
+@pytest.mark.asyncio
+async def test_e_static_insufficient_and_browser_failure_raises_page_fetch_error():
+    static = _FakeRenderer(html=_SPA_SHELL_HTML, name="static")
+    fallback = _FakeRenderer(error=RuntimeError("chromium crashed"), name="browser")
+    client = PageFetchClient(static, FAST_CONFIG, fallback_renderer=fallback)
+
+    with pytest.raises(PageFetchError) as exc_info:
+        await client.fetch("https://jobs.example.com/both-fail")
+
+    message = str(exc_info.value)
+    assert "insufficient" in message
+    assert "browser fallback" in message
+    assert "browser" in message  # renderer name present, per task brief
+
+
+@pytest.mark.asyncio
+async def test_e_static_error_and_browser_failure_raises_page_fetch_error():
+    static = _FakeRenderer(error=RuntimeError("dns failure"), name="static")
+    fallback = _FakeRenderer(error=RuntimeError("chromium crashed"), name="browser")
+    client = PageFetchClient(static, FAST_CONFIG, fallback_renderer=fallback)
+
+    with pytest.raises(PageFetchError) as exc_info:
+        await client.fetch("https://jobs.example.com/both-fail-2")
+
+    assert "browser fallback" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_f_browser_fallback_preserves_url_title_fetched_at_contract():
+    static = _FakeRenderer(html=_SPA_SHELL_HTML, name="static")
+    fallback = _FakeRenderer(html=_RENDERED_WITH_MAIN_HTML, name="browser")
+    client = PageFetchClient(static, FAST_CONFIG, fallback_renderer=fallback)
+
+    page = await client.fetch("https://jobs.example.com/spa-shell")
+
+    assert isinstance(page, FetchedPage)
+    assert page.url == "https://jobs.example.com/spa-shell"
+    assert page.title == "Backend Engineer at Acme"
+    assert page.fetched_at is not None
+    assert page.html == _RENDERED_WITH_MAIN_HTML
+
+
+@pytest.mark.asyncio
+async def test_static_http_renderer_returns_response_text():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/job/1"
+        return httpx.Response(200, text="<html><body>hi</body></html>")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        renderer = StaticHttpRenderer(client=http)
+        html = await renderer.render("https://jobs.example.com/job/1", timeout_seconds=5.0)
+
+    assert html == "<html><body>hi</body></html>"
+
+
+@pytest.mark.asyncio
+async def test_static_http_renderer_sends_user_agent_when_configured():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["user_agent"] = request.headers.get("user-agent")
+        return httpx.Response(200, text="ok")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        renderer = StaticHttpRenderer(user_agent="JobHuntBot/1.0", client=http)
+        await renderer.render("https://jobs.example.com/job/1", timeout_seconds=5.0)
+
+    assert captured["user_agent"] == "JobHuntBot/1.0"
+
+
+@pytest.mark.asyncio
+async def test_static_http_renderer_raises_on_http_error_status():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="not found")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        renderer = StaticHttpRenderer(client=http)
+        with pytest.raises(httpx.HTTPStatusError):
+            await renderer.render("https://jobs.example.com/missing", timeout_seconds=5.0)
+
+
+@pytest.mark.asyncio
+async def test_no_fallback_configured_behaves_as_single_renderer_even_if_insufficient():
+    # fallback_renderer defaults to None — the pre-existing single-renderer
+    # contract every other test in this file exercises. Insufficient
+    # content is returned as-is rather than raising, since there is nothing
+    # to fall back to.
+    static = _FakeRenderer(html=_SPA_SHELL_HTML, name="static")
+    client = PageFetchClient(static, FAST_CONFIG)
+
+    page = await client.fetch("https://jobs.example.com/spa-shell")
+
+    assert "JPMC Candidate Experience page" in page.text

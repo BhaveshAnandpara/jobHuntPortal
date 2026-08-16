@@ -61,9 +61,13 @@ def get_page_fetcher() -> PageFetcher:
     from infrastructure.external.page_fetch import (
         PageFetchClient,
         PlaywrightPageRenderer,
+        StaticHttpRenderer,
     )
 
-    return PageFetchClient(PlaywrightPageRenderer())
+    # Fast static HTTP fetch first; Chromium only as a last-resort fallback
+    # for pages whose posting body is rendered client-side — see
+    # infrastructure/external/page_fetch.py's module docstring.
+    return PageFetchClient(StaticHttpRenderer(), fallback_renderer=PlaywrightPageRenderer())
 
 
 class _LLMClientExtractor:

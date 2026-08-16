@@ -19,6 +19,7 @@ dependencies = [
     "confluent-kafka",
     "playwright",
     "beautifulsoup4",
+    "httpx",
     "ollama",
     "google-genai",
     "groq",
