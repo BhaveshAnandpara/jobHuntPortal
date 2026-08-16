@@ -7,21 +7,24 @@
  * computed client-side, rendered exactly as received.
  *
  * `ProfileMatchScore` carries only `profile_id`/`resume_id` (no human name),
- * so this cross-references the already-fetched `profiles` list (same data
- * MatchPanel's "Selected resume" resolves from) to show each resume's
- * title, falling back to a generic label if a profile lookup hasn't
- * resolved for some reason.
+ * so this cross-references the already-fetched `resumes` list (`GET
+ * /resumes`) to show each entry's uploaded file name, falling back to a
+ * generic label if a lookup hasn't resolved for some reason. Deliberately
+ * not the resume's extracted `title` (from `/profiles`) — several resumes
+ * from the same candidate often extract to the same title (e.g. "Associate
+ * Software Engineer" for every variant), making entries indistinguishable;
+ * the file name is what's actually unique per upload.
  *
  * Owner: frontend-opportunities-agent.
  */
 
 import { Card, ErrorState, Skeleton } from '../../components'
-import type { ProfileMatchScore, ResumeProfile } from '../../api/types'
+import type { ProfileMatchScore, ResumeResponse } from '../../api/types'
 import { formatScorePercent } from '../../utils/format'
 
 type OtherResumesEvaluatedProps = {
   profileScores: ProfileMatchScore[] | undefined
-  profiles: ResumeProfile[] | undefined
+  resumes: ResumeResponse[] | undefined
   selectedResumeId: string | null | undefined
   isLoading: boolean
   isError: boolean
@@ -29,13 +32,13 @@ type OtherResumesEvaluatedProps = {
   onRetry: () => void
 }
 
-function resumeLabel(profileScore: ProfileMatchScore, profiles: ResumeProfile[] | undefined): string {
-  return profiles?.find((profile) => profile.profile_id === profileScore.profile_id)?.title ?? 'Resume'
+function resumeLabel(profileScore: ProfileMatchScore, resumes: ResumeResponse[] | undefined): string {
+  return resumes?.find((resume) => resume.id === profileScore.resume_id)?.file_name ?? 'Resume'
 }
 
 export function OtherResumesEvaluated({
   profileScores,
-  profiles,
+  resumes,
   selectedResumeId,
   isLoading,
   isError,
@@ -64,7 +67,7 @@ export function OtherResumesEvaluated({
                 className="flex items-center justify-between gap-3 rounded-md border border-gray-100 px-3 py-2 text-sm"
               >
                 <span className="text-gray-700">
-                  {resumeLabel(profileScore, profiles)}
+                  {resumeLabel(profileScore, resumes)}
                   {selectedResumeId && profileScore.resume_id === selectedResumeId ? (
                     <span className="ml-2 rounded-full bg-status-positive-bg px-2 py-0.5 text-xs text-status-positive">
                       Selected

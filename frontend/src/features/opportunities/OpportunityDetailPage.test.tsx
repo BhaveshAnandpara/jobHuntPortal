@@ -102,6 +102,12 @@ describe('OpportunityDetailPage', () => {
     expect(await screen.findByText('Selected')).toBeInTheDocument()
     expect(screen.getByText('Other resumes evaluated')).toBeInTheDocument()
     expect(screen.getAllByText('87%').length).toBeGreaterThan(0)
+
+    // Labeled by the uploaded file name (`resume.pdf`, from `GET
+    // /resumes`), not the extracted `title` — several resumes from the
+    // same candidate often extract to the same title, making them
+    // indistinguishable by title alone.
+    expect(screen.getByText('resume.pdf')).toBeInTheDocument()
   })
 
   it('renders the application history timeline', async () => {

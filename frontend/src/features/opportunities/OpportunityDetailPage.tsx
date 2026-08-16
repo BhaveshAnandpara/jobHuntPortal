@@ -40,6 +40,7 @@ import { useApplication, useApplicationHistory } from '../../api/tracking'
 import { useJob } from '../../api/jobs'
 import { useJobMatch } from '../../api/matching'
 import { useProfiles } from '../../api/profiles'
+import { useResumes } from '../../api/resumes'
 import { useOutreachList } from '../../api/outreach'
 import { pollUntil } from '../../hooks/usePolling'
 import { toApiError } from '../../api/client'
@@ -64,6 +65,7 @@ export function OpportunityDetailPage() {
   const jobQuery = useJob(application?.job_id ?? '')
   const jobMatchQuery = useJobMatch(application?.job_id ?? '')
   const profilesQuery = useProfiles()
+  const resumesQuery = useResumes()
   const outreachQuery = useOutreachList()
 
   const selectedProfile = useMemo(
@@ -143,7 +145,7 @@ export function OpportunityDetailPage() {
 
         <OtherResumesEvaluated
           profileScores={jobMatchQuery.data?.profile_scores}
-          profiles={profilesQuery.data}
+          resumes={resumesQuery.data}
           selectedResumeId={application.selected_resume_id}
           isLoading={jobMatchQuery.isLoading}
           isError={jobMatchQuery.isError}
