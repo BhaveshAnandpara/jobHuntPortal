@@ -68,7 +68,7 @@ from infrastructure.kafka.topics import Topic
 from infrastructure.logging import configure_logging, get_logger
 
 load_metadata()
-configure_logging()
+configure_logging(log_filename="consumers.log")
 logger = get_logger(__name__)
 
 # One EventConsumer per (topic, consumer group) pair from

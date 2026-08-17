@@ -157,6 +157,47 @@ async def test_handle_contacts_requested_skips_replayed_message_once_persisted(
 
 
 @pytest.mark.asyncio
+async def test_handle_contacts_requested_logs_the_underlying_search_failure(
+    session_factory, caplog
+) -> None:
+    """A people-search provider failure still routes forward to an empty
+    `contacts.found` (per `search_contacts`'s documented contract), but the
+    "no contacts found" WARNING must carry the real failure reason — not
+    just "zero results" indistinguishable from a legitimate empty search.
+    """
+    from infrastructure.external.errors import PeopleSearchRequestError
+
+    request = make_search_request()
+    broker = InMemoryBroker()
+    db_module.set_session_factory(session_factory)
+    events_module.set_event_producer(
+        EventProducer("contact-discovery-service", client=InMemoryProducerClient(broker))
+    )
+    nodes_module.set_people_search_client(
+        FakePeopleSearchClient(
+            error=PeopleSearchRequestError(
+                "people search failed: 403 Client Error", provider="public-web-search"
+            )
+        )
+    )
+    nodes_module.set_llm_client(
+        FakeLLMClient(default=ContactSearchPlan(role_keywords=["Engineer"]))
+    )
+
+    envelope = build_envelope(Topic.CONTACTS_REQUESTED, request, producer="job-matching-service")
+
+    with caplog.at_level("WARNING"):
+        await consumers_module._handle_contacts_requested_async(envelope)
+
+    warning_lines = [
+        r.message for r in caplog.records if "no contacts found" in r.message
+    ]
+    assert warning_lines
+    assert "403 Client Error" in warning_lines[0]
+    assert "search_contacts" in warning_lines[0]
+
+
+@pytest.mark.asyncio
 async def test_handle_contacts_requested_wraps_llm_provider_error(session_factory) -> None:
     from infrastructure.llm import LLMFailureReason, LLMProviderError
 
@@ -225,3 +266,29 @@ def test_handle_contacts_requested_sync_wrapper_drives_the_async_body(monkeypatc
     consumers_module.handle_contacts_requested(envelope)
 
     assert calls == [envelope]
+
+
+def test_handle_contacts_requested_sync_wrapper_enforces_a_hard_timeout(monkeypatch) -> None:
+    """A handler that never returns must not block this thread forever —
+    `asyncio.wait_for`'s `DEFAULT_HANDLER_TIMEOUT_SECONDS` ceiling (see that
+    constant's docstring) must fire and surface as a plain `TimeoutError`
+    so `EventConsumer`'s existing retry/DLQ path can take over. Patches the
+    ceiling to a tiny value so this test does not actually wait minutes.
+    """
+    import infrastructure.kafka.consumer as consumer_module
+
+    monkeypatch.setattr(consumer_module, "DEFAULT_HANDLER_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(consumers_module, "DEFAULT_HANDLER_TIMEOUT_SECONDS", 0.05)
+
+    async def hanging_handler(envelope: object) -> None:
+        import asyncio
+
+        await asyncio.sleep(999)
+
+    monkeypatch.setattr(consumers_module, "_handle_contacts_requested_async", hanging_handler)
+
+    request = make_search_request()
+    envelope = build_envelope(Topic.CONTACTS_REQUESTED, request, producer="job-matching-service")
+
+    with pytest.raises(TimeoutError):
+        consumers_module.handle_contacts_requested(envelope)

@@ -27,7 +27,7 @@ from infrastructure.external.errors import PeopleSearchRequestError
 from infrastructure.external.people_search import (
     PeopleSearchClient,
     PeopleSearchQuery,
-    StaticPeopleSearchProvider,
+    default_people_search_provider,
 )
 from infrastructure.llm import LLMClient, LLMProviderError
 from shared.errors.codes import ErrorCode
@@ -65,10 +65,13 @@ _llm_client: LLMClient | None = None
 def _get_people_search_client() -> PeopleSearchClient:
     global _people_search_client
     if _people_search_client is None:
-        # Local-runnable default (no third-party credentials required) —
-        # returns zero hits until a real provider is injected in
-        # production wiring via set_people_search_client.
-        _people_search_client = PeopleSearchClient(StaticPeopleSearchProvider([]))
+        # `default_people_search_provider()` resolves `PublicWebSearchProvider`
+        # when PEOPLE_SEARCH_PROVIDER/PEOPLE_SEARCH_API_KEY/
+        # PEOPLE_SEARCH_ENGINE_ID are configured (see .env.example), and
+        # falls back to the zero-credential `StaticPeopleSearchProvider([])`
+        # otherwise — this node runs identically either way, just with zero
+        # hits until a real provider is configured.
+        _people_search_client = PeopleSearchClient(default_people_search_provider())
     return _people_search_client
 
 

@@ -148,7 +148,10 @@ from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from infrastructure.kafka.consumer import propagate_correlation_id
+from infrastructure.kafka.consumer import (
+    DEFAULT_HANDLER_TIMEOUT_SECONDS,
+    propagate_correlation_id,
+)
 from infrastructure.logging import format_context, get_logger
 from shared.events.envelope import EventEnvelope
 from shared.events.payloads import OutreachDecision, OutreachSentConfirmation
@@ -573,8 +576,15 @@ def _run_sync(async_handler: Callable[[EventEnvelope], Awaitable[None]], envelop
     """The one shared sliver of boilerplate every `handle_x` below needs —
     see module docstring's opening paragraph for why this can't just be
     `async def handle_x` registered directly with `EventConsumer`.
+
+    Wrapped in `asyncio.wait_for` with a hard ceiling
+    (`DEFAULT_HANDLER_TIMEOUT_SECONDS`) so a stuck handler cannot block this
+    consumer's thread forever — see that constant's docstring for the
+    incident this generally closes. Tracking Service has no external
+    dependencies of its own (service-boundaries.md), so this is pure
+    defense in depth here rather than addressing a known local cause.
     """
-    asyncio.run(async_handler(envelope))
+    asyncio.run(asyncio.wait_for(async_handler(envelope), timeout=DEFAULT_HANDLER_TIMEOUT_SECONDS))
 
 
 def handle_job_discovered(envelope: EventEnvelope[NormalizedJob]) -> None:

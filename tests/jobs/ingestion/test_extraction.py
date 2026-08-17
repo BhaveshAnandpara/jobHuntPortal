@@ -6,7 +6,7 @@ LLM extraction pipeline shared by the manual URL path (and, via
 import pytest
 
 from jobs.ingestion.errors import JobIngestionError
-from jobs.ingestion.extraction import extract_job_from_url
+from jobs.ingestion.extraction import MAX_PAGE_CONTENT_CHARS, extract_job_from_url
 from shared.errors.codes import ErrorCode
 from tests.jobs.conftest import FakeExtractor, FakePageFetcher, make_extracted_fields
 
@@ -61,6 +61,22 @@ async def test_extract_llm_failure_raises_llm_provider_error() -> None:
         await extract_job_from_url(URL, page_fetcher=fetcher, extractor=extractor)
 
     assert excinfo.value.error_code is ErrorCode.LLM_PROVIDER_ERROR
+
+
+@pytest.mark.asyncio
+async def test_extract_truncates_oversized_page_content() -> None:
+    # A careers *listing* page (rather than a single posting) can yield an
+    # enormous amount of visible text; the prompt sent to the LLM must stay
+    # bounded so a rate-limited provider tier doesn't reject the request.
+    oversized = "A" * (MAX_PAGE_CONTENT_CHARS + 5_000)
+    fetcher = FakePageFetcher(pages={URL: oversized})
+    extractor = FakeExtractor(default=make_extracted_fields())
+
+    await extract_job_from_url(URL, page_fetcher=fetcher, extractor=extractor)
+
+    (prompt,) = extractor.prompts
+    assert "A" * MAX_PAGE_CONTENT_CHARS in prompt
+    assert "A" * (MAX_PAGE_CONTENT_CHARS + 1) not in prompt
 
 
 @pytest.mark.asyncio

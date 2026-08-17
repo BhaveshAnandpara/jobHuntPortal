@@ -24,7 +24,10 @@ import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from infrastructure.kafka.consumer import propagate_correlation_id
+from infrastructure.kafka.consumer import (
+    DEFAULT_HANDLER_TIMEOUT_SECONDS,
+    propagate_correlation_id,
+)
 from infrastructure.llm import LLMProviderError
 from infrastructure.logging import format_context, get_logger
 from matching.clients import UserPreferencesClient
@@ -152,8 +155,19 @@ def handle_job_discovered(envelope: EventEnvelope[NormalizedJob]) -> None:
     contract — see this module's docstring for why. Constructible as
     `EventConsumer(Topic.JOBS_DISCOVERED, "job-matching-service",
     handle_job_discovered, dlq_producer=...)`.
+
+    Wrapped in `asyncio.wait_for` with a hard ceiling
+    (`DEFAULT_HANDLER_TIMEOUT_SECONDS` — see that constant's docstring for
+    the incident this closes) so a stuck outbound call (User/Profile
+    Service HTTP, LLM) cannot block this consumer's thread forever; a
+    timeout here is just another exception to `EventConsumer`'s existing
+    retry/DLQ path.
     """
-    asyncio.run(_handle_job_discovered_async(envelope))
+    asyncio.run(
+        asyncio.wait_for(
+            _handle_job_discovered_async(envelope), timeout=DEFAULT_HANDLER_TIMEOUT_SECONDS
+        )
+    )
 
 
 async def _handle_job_discovered_async(envelope: EventEnvelope[NormalizedJob]) -> None:

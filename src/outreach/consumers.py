@@ -45,7 +45,10 @@ from infrastructure.external.message_send import (
     OutboundMessage,
     RecordingMessageSendProvider,
 )
-from infrastructure.kafka.consumer import propagate_correlation_id
+from infrastructure.kafka.consumer import (
+    DEFAULT_HANDLER_TIMEOUT_SECONDS,
+    propagate_correlation_id,
+)
 from infrastructure.llm import LLMProviderError
 from infrastructure.logging import format_context, get_logger
 from outreach.clients import JobIngestionClient, JobMatchClient, ProfileServiceClient
@@ -331,8 +334,19 @@ async def _handle_contacts_found_async(envelope: EventEnvelope[ContactRankingRes
 
 def handle_contacts_found(envelope: EventEnvelope[ContactRankingResult]) -> None:
     """Sync entry point required by `EventConsumer`'s `EventHandler`
-    contract — see this module's docstring."""
-    asyncio.run(_handle_contacts_found_async(envelope))
+    contract — see this module's docstring.
+
+    Wrapped in `asyncio.wait_for` with a hard ceiling
+    (`DEFAULT_HANDLER_TIMEOUT_SECONDS`) so a stuck outbound call (Job
+    Matching/Resume-Profile HTTP, LLM) cannot block this consumer's thread
+    forever — see that constant's docstring for the incident this
+    generally closes.
+    """
+    asyncio.run(
+        asyncio.wait_for(
+            _handle_contacts_found_async(envelope), timeout=DEFAULT_HANDLER_TIMEOUT_SECONDS
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -491,8 +505,17 @@ def handle_outreach_approved(envelope: EventEnvelope[OutreachDecision]) -> None:
     contract — see this module's docstring. Constructible with a dedicated
     `group_id=SEND_WORKER_GROUP_ID` consumer group, separate from any
     other consumer group this component might use.
+
+    Wrapped in `asyncio.wait_for` with a hard ceiling
+    (`DEFAULT_HANDLER_TIMEOUT_SECONDS`) so a stuck outbound send provider
+    call cannot block this consumer's thread forever — see that constant's
+    docstring for the incident this generally closes.
     """
-    asyncio.run(_handle_outreach_approved_async(envelope))
+    asyncio.run(
+        asyncio.wait_for(
+            _handle_outreach_approved_async(envelope), timeout=DEFAULT_HANDLER_TIMEOUT_SECONDS
+        )
+    )
 
 
 __all__ = [

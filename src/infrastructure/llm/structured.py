@@ -20,7 +20,6 @@ per about_project.md) — see `_default_provider()`.
 from __future__ import annotations
 
 import json
-import logging
 import time
 from types import UnionType
 from typing import TypeVar, Union, get_args, get_origin
@@ -30,11 +29,11 @@ from pydantic import BaseModel, ValidationError
 from infrastructure.llm.config import LLMCallOptions, LLMConfig
 from infrastructure.llm.errors import LLMFailureReason, LLMProviderError, excerpt
 from infrastructure.llm.provider import LLMProvider, LLMRequest
+from infrastructure.logging import get_logger
 
 T = TypeVar("T", bound=BaseModel)
 
-logger = logging.getLogger("src.infrastructure.llm.structured")
-logging.basicConfig(level=logging.INFO, format="[src-infrastructure] %(message)s")
+logger = get_logger(__name__)
 
 
 def schema_instructions(schema: type[BaseModel]) -> str:

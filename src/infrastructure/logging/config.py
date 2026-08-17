@@ -108,7 +108,9 @@ class _ServiceNameFilter(logging.Filter):
         return True
 
 
-def configure_logging(level: int | str = logging.INFO, *, log_dir: Path | None = None) -> None:
+def configure_logging(
+    level: int | str = logging.INFO, *, log_dir: Path | None = None, log_filename: str | None = None
+) -> None:
     """Attach a console handler and a rotating file handler to the root
     logger. Idempotent — safe to call more than once in the same process
     (e.g. a test or script that imports `api.main` more than once); only
@@ -119,6 +121,17 @@ def configure_logging(level: int | str = logging.INFO, *, log_dir: Path | None =
     purely so `tests/infrastructure/test_logging.py` can point a real,
     fully-configured logger at an isolated `tmp_path` instead of the
     process's real environment/working directory.
+
+    `log_filename` defaults to `application.log` (`_LOG_FILE.name`) when
+    omitted. Every process's root logger is process-wide, so two OS
+    processes sharing one file (the FastAPI server and the standalone
+    Kafka consumer workers, per `scripts/run_server.py` and
+    `scripts/run_consumers.py`) interleave their lines in one log with no
+    way to `tail` just one side. `scripts/run_consumers.py` passes
+    `"consumers.log"` here so a consumer-only incident (a wedged handler, a
+    dead-lettered message, a `MAXPOLL`-triggered group departure) can be
+    diagnosed from its own file without filtering out the API's request
+    logs first.
 
     Deliberately NOT called at import time anywhere — see `api.main`'s
     lifespan handler for the one real call site. Importing this module (or
@@ -131,6 +144,7 @@ def configure_logging(level: int | str = logging.INFO, *, log_dir: Path | None =
 
     target_dir = log_dir if log_dir is not None else _LOG_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
+    target_filename = log_filename if log_filename is not None else _LOG_FILE.name
 
     formatter = logging.Formatter(_FORMAT, datefmt=_DATEFMT)
     service_filter = _ServiceNameFilter()
@@ -140,7 +154,7 @@ def configure_logging(level: int | str = logging.INFO, *, log_dir: Path | None =
     console_handler.addFilter(service_filter)
 
     file_handler = logging.handlers.RotatingFileHandler(
-        target_dir / _LOG_FILE.name,
+        target_dir / target_filename,
         maxBytes=_MAX_BYTES,
         backupCount=_BACKUP_COUNT,
         encoding="utf-8",

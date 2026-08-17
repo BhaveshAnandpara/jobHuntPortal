@@ -7,6 +7,7 @@ handler failure, and dead-letter republishing once retries are exhausted,
 per docs/architecture/kafka-topics.md's delivery-semantics section.
 """
 
+import threading
 import time
 from collections.abc import Callable
 from typing import Self
@@ -39,6 +40,57 @@ DEFAULT_BACKOFF_BASE_SECONDS = 1.0
 """Exponential backoff base: attempt *n* waits
 ``DEFAULT_BACKOFF_BASE_SECONDS * 2 ** (n - 1)`` seconds before the next
 attempt (1s, 2s, ... for the default base)."""
+
+DEFAULT_STALL_WARNING_SECONDS = 30.0
+"""How long a single ``handler(envelope)`` call may run before this
+consumer starts logging a repeating WARNING that it's still in flight.
+
+Added after a real incident: `tracking-service-jobs-discovered`'s handler
+hung on one message for over 10 minutes with zero log output the whole
+time — the only trace left behind was `kafka-consumer-groups.sh --describe`
+showing 1 message of lag and librdkafka's own ``MAXPOLL ... leaving
+group`` line once ``max.poll.interval.ms`` (600s) finally evicted it from
+the consumer group. Diagnosing that after the fact required cross-
+referencing librdkafka's internal ``rdkafka#consumer-N`` client id against
+this process's `EventConsumer` construction order by hand. A "handler
+started" line plus a repeating stall warning (both carrying `topic`/
+`group_id`/`correlation_id` directly, unlike librdkafka's own log) means
+the *next* occurrence shows up in the log within `DEFAULT_STALL_WARNING_SECONDS`
+of it happening, identifies exactly which message and correlation chain
+is stuck, and needs no offset-lag detective work to notice at all."""
+
+DEFAULT_HANDLER_TIMEOUT_SECONDS = 300.0
+"""Hard ceiling on how long a single ``handler(envelope)`` call may run
+before it is treated as failed, so a stuck handler can never block this
+consumer's thread (and therefore that topic-partition) forever — only up to
+this many seconds per attempt, after which the normal retry/DLQ path below
+takes over exactly as it does for any other exception.
+
+Added after a second real incident, this time on ``job-matching-service``:
+its handler froze on ``jobs.discovered`` for 390+ seconds and counting, with
+the stall watchdog above firing every 30s and zero further log output —
+confirmed via a live stack dump to be parked inside the asyncio event loop's
+own ``select()`` wait (not the database, which `pg_stat_activity` showed had
+no query in flight for it), almost certainly the outbound
+``UserPreferencesClient`` HTTP call never resolving despite its own
+component-level ``httpx`` ``timeout=10.0``. A nested call's own timeout is
+only a *best-effort* bound on that one call; it cannot be trusted as a bound
+on the whole handler, since the transport enforcing it shares the same
+event loop that may itself be the thing failing to make progress (this
+codebase's consumers must run under Windows' ``SelectorEventLoop`` — see
+``scripts/run_consumers.py``'s docstring — because `psycopg`'s async driver
+refuses ``ProactorEventLoop``, and Selector has its own historical rough
+edges on Windows). Every component's own ``handle_*`` sync entry point is
+expected to wrap its ``asyncio.run(...)`` call's coroutine in
+``asyncio.wait_for(..., timeout=DEFAULT_HANDLER_TIMEOUT_SECONDS)`` — this
+module cannot enforce it centrally itself, since `EventHandler` is a plain
+synchronous callable from `_process_message`'s point of view, with no
+running event loop of its own to attach a timeout to.
+
+Generous (5 minutes) so a legitimately slow run (e.g. several profiles each
+needing their own LLM call, `infrastructure.llm.config.LLMConfig`'s own
+default ``timeout_seconds=120``/``max_attempts=3``) is not mistaken for a
+hang; still finite, which is the entire point."""
 
 
 def propagate_correlation_id(envelope: EventEnvelope) -> CorrelationId:
@@ -106,6 +158,7 @@ class EventConsumer:
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
         backoff_base_seconds: float = DEFAULT_BACKOFF_BASE_SECONDS,
         sleep: Callable[[float], None] = time.sleep,
+        stall_warning_seconds: float = DEFAULT_STALL_WARNING_SECONDS,
     ) -> None:
         self.topic = topic
         self.group_id = group_id
@@ -119,6 +172,7 @@ class EventConsumer:
         self.backoff_base_seconds = backoff_base_seconds
         self._sleep = sleep
         self._subscribed = False
+        self.stall_warning_seconds = stall_warning_seconds
 
     def _producer(self) -> EventProducer:
         if self._dlq_producer is None:
@@ -203,23 +257,42 @@ class EventConsumer:
             self._commit(message)
             return
 
+        thread_name = threading.current_thread().name
         last_exc: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
+            logger.info(
+                "Handler started | %s",
+                format_context(
+                    topic=self.topic.value,
+                    event_type=envelope.event_type.value,
+                    correlation_id=envelope.correlation_id,
+                    group_id=self.group_id,
+                    attempt=attempt,
+                    thread=thread_name,
+                ),
+            )
+            started_at = time.monotonic()
+            watchdog = self._start_stall_watchdog(envelope, attempt=attempt, thread_name=thread_name, started_at=started_at)
             try:
                 self.handler(envelope)
             except Exception as exc:  # noqa: BLE001 - transport can't know the handler's exception taxonomy
+                watchdog.set()
                 last_exc = exc
+                duration_ms = round((time.monotonic() - started_at) * 1000, 1)
                 logger.warning(
-                    "Handler for %s failed (attempt %d/%d): %s",
+                    "Handler for %s failed (attempt %d/%d) after %.1fms: %s",
                     self.topic.value,
                     attempt,
                     self.max_attempts,
+                    duration_ms,
                     exc,
                 )
                 if attempt < self.max_attempts:
                     self._sleep(self.backoff_base_seconds * (2 ** (attempt - 1)))
                 continue
             else:
+                watchdog.set()
+                duration_ms = round((time.monotonic() - started_at) * 1000, 1)
                 logger.info(
                     "Kafka event consumed | %s",
                     format_context(
@@ -227,6 +300,7 @@ class EventConsumer:
                         event_type=envelope.event_type.value,
                         correlation_id=envelope.correlation_id,
                         group_id=self.group_id,
+                        duration_ms=duration_ms,
                     ),
                 )
                 self._commit(message)
@@ -245,6 +319,46 @@ class EventConsumer:
         )
         self._dead_letter(envelope, raw_key, last_exc, retry_count=self.max_attempts)
         self._commit(message)
+
+    def _start_stall_watchdog(
+        self, envelope: EventEnvelope, *, attempt: int, thread_name: str, started_at: float
+    ) -> threading.Event:
+        """Start a background thread that logs a WARNING every
+        ``stall_warning_seconds`` for as long as the in-flight
+        ``self.handler(envelope)`` call has not returned. See
+        ``DEFAULT_STALL_WARNING_SECONDS``'s docstring for why this exists.
+
+        Returns a ``threading.Event`` the caller must ``.set()`` as soon as
+        the handler call actually returns (success or exception) — that's
+        what makes the blocking ``stop_event.wait(...)`` below return
+        early and end the watchdog thread instead of logging a stale
+        warning for a message that already finished. The thread is a
+        daemon so a missed ``.set()`` still can't block process exit.
+        """
+        stop_event = threading.Event()
+
+        def _watch() -> None:
+            while not stop_event.wait(self.stall_warning_seconds):
+                elapsed_seconds = round(time.monotonic() - started_at, 1)
+                logger.warning(
+                    "Handler still running past %.0fs, possible stall | %s",
+                    self.stall_warning_seconds,
+                    format_context(
+                        topic=self.topic.value,
+                        event_type=envelope.event_type.value,
+                        correlation_id=envelope.correlation_id,
+                        group_id=self.group_id,
+                        attempt=attempt,
+                        thread=thread_name,
+                        elapsed_seconds=elapsed_seconds,
+                    ),
+                )
+
+        watchdog_thread = threading.Thread(
+            target=_watch, daemon=True, name=f"stall-watchdog:{self.group_id}:{self.topic.value}"
+        )
+        watchdog_thread.start()
+        return stop_event
 
     def _dead_letter(
         self,
@@ -286,6 +400,7 @@ class EventConsumer:
 
 __all__ = [
     "DEFAULT_BACKOFF_BASE_SECONDS",
+    "DEFAULT_HANDLER_TIMEOUT_SECONDS",
     "DEFAULT_MAX_ATTEMPTS",
     "EventConsumer",
     "EventHandler",

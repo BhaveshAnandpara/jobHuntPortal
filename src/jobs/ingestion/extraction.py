@@ -22,6 +22,19 @@ from pydantic import BaseModel, Field
 from jobs.ingestion.errors import JobIngestionError
 from shared.errors.codes import ErrorCode
 
+MAX_PAGE_CONTENT_CHARS = 12_000
+"""Ceiling on how much fetched page text goes into the extraction prompt.
+
+Some pages (e.g. a careers *listing* page rather than a single posting)
+yield hundreds of thousands of characters of visible text — well beyond
+what a rate-limited LLM tier can accept in one request. Groq's free
+`on_demand` tier caps `openai/gpt-oss-120b` at 8,000 tokens/minute; at
+roughly 4 chars/token, 12,000 chars (~3,000 tokens) leaves headroom for
+the fixed instructional prompt text and the completion, with enough
+budget left in the same minute for `call_with_resilience`'s retries.
+A truncated page still carries a job posting's real content up front
+(title/company/summary), which is what matters for extraction."""
+
 
 class ExtractedJobFields(BaseModel):
     """The subset of `Job` an LLM can read off a job posting page.
@@ -190,6 +203,9 @@ async def extract_job_from_url(
             ErrorCode.INVALID_JOB_URL, f"{url} returned no page content"
         )
 
+    if len(page_content) > MAX_PAGE_CONTENT_CHARS:
+        page_content = page_content[:MAX_PAGE_CONTENT_CHARS]
+
     try:
         extracted = await extractor.extract(
             _EXTRACTION_PROMPT.format(page_content=page_content),
@@ -210,6 +226,7 @@ async def extract_job_from_url(
 
 
 __all__ = [
+    "MAX_PAGE_CONTENT_CHARS",
     "ExtractedJobFields",
     "PageFetcher",
     "StructuredExtractor",

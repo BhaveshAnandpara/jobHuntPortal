@@ -45,6 +45,8 @@ export function DashboardPage() {
     .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
     .slice(0, RECENT_COUNT)
 
+  console.log(JSON.parse(JSON.stringify(recent)))
+
   const activeCount = applicationList.filter((a) => matchesStatusTab(a.status, 'active')).length
   const appliedCount = applicationList.filter((a) => matchesStatusTab(a.status, 'applied')).length
   const closedCount = applicationList.filter((a) => matchesStatusTab(a.status, 'closed')).length

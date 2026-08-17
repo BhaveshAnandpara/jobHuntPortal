@@ -27,7 +27,10 @@ import time
 from contacts.db import contacts_session_scope
 from contacts.errors import ContactDiscoveryError
 from contacts.repository import ContactRepository
-from infrastructure.kafka.consumer import propagate_correlation_id
+from infrastructure.kafka.consumer import (
+    DEFAULT_HANDLER_TIMEOUT_SECONDS,
+    propagate_correlation_id,
+)
 from infrastructure.llm import LLMProviderError
 from infrastructure.logging import format_context, get_logger
 from shared.errors.codes import ErrorCode
@@ -106,9 +109,15 @@ async def _run_discovery(
             format_context(job_id=payload.job_id, contacts_found=len(ranked), duration_ms=duration_ms),
         )
     else:
+        workflow_errors = result.get("errors") or []
         logger.warning(
             "Contact discovery completed with no contacts found | %s",
-            format_context(job_id=payload.job_id, company=payload.company, duration_ms=duration_ms),
+            format_context(
+                job_id=payload.job_id,
+                company=payload.company,
+                duration_ms=duration_ms,
+                errors="; ".join(f"{e.node}: {e.message}" for e in workflow_errors) or None,
+            ),
         )
     return result
 
@@ -118,8 +127,17 @@ def handle_contacts_requested(envelope: EventEnvelope[ContactSearchRequest]) -> 
     contract — see this module's docstring for why. Constructible as
     `EventConsumer(Topic.CONTACTS_REQUESTED, "contact-discovery-service",
     handle_contacts_requested, dlq_producer=...)`.
+
+    Wrapped in `asyncio.wait_for` with a hard ceiling
+    (`DEFAULT_HANDLER_TIMEOUT_SECONDS`) so a stuck outbound call
+    (people-search, LLM) cannot block this consumer's thread forever — see
+    that constant's docstring for the incident this generally closes.
     """
-    asyncio.run(_handle_contacts_requested_async(envelope))
+    asyncio.run(
+        asyncio.wait_for(
+            _handle_contacts_requested_async(envelope), timeout=DEFAULT_HANDLER_TIMEOUT_SECONDS
+        )
+    )
 
 
 async def _handle_contacts_requested_async(

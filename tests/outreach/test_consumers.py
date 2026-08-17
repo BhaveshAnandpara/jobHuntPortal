@@ -265,6 +265,33 @@ def test_handle_contacts_found_sync_wrapper_drives_the_async_body(monkeypatch) -
     assert calls == [envelope]
 
 
+def test_handle_contacts_found_sync_wrapper_enforces_a_hard_timeout(monkeypatch) -> None:
+    """A handler that never returns must not block this thread forever —
+    `asyncio.wait_for`'s `DEFAULT_HANDLER_TIMEOUT_SECONDS` ceiling (see
+    that constant's docstring) must fire and surface as a plain
+    `TimeoutError` so `EventConsumer`'s existing retry/DLQ path can take
+    over. Patches the ceiling to a tiny value so this test does not
+    actually wait minutes.
+    """
+    import asyncio
+
+    monkeypatch.setattr(consumers_module, "DEFAULT_HANDLER_TIMEOUT_SECONDS", 0.05)
+
+    async def hanging_handler(envelope: object) -> None:
+        await asyncio.sleep(999)
+
+    monkeypatch.setattr(consumers_module, "_handle_contacts_found_async", hanging_handler)
+
+    envelope = build_envelope(
+        Topic.CONTACTS_FOUND,
+        _make_result(JobId(uuid4()), UserId(uuid4()), []),
+        producer="contact-discovery-service",
+    )
+
+    with pytest.raises(TimeoutError):
+        consumers_module.handle_contacts_found(envelope)
+
+
 # ---------------------------------------------------------------------------
 # outreach.approved send worker
 # ---------------------------------------------------------------------------
@@ -571,3 +598,30 @@ def test_handle_outreach_approved_sync_wrapper_drives_the_async_body(monkeypatch
     consumers_module.handle_outreach_approved(envelope)
 
     assert calls == [envelope]
+
+
+def test_handle_outreach_approved_sync_wrapper_enforces_a_hard_timeout(monkeypatch) -> None:
+    """See `test_handle_contacts_found_sync_wrapper_enforces_a_hard_timeout`
+    above — same ceiling, applied to the send-worker entry point."""
+    import asyncio
+
+    monkeypatch.setattr(consumers_module, "DEFAULT_HANDLER_TIMEOUT_SECONDS", 0.05)
+
+    async def hanging_handler(envelope: object) -> None:
+        await asyncio.sleep(999)
+
+    monkeypatch.setattr(consumers_module, "_handle_outreach_approved_async", hanging_handler)
+
+    decision = OutreachDecision(
+        outreach_id=OutreachId(uuid4()),
+        job_id=JobId(uuid4()),
+        user_id=UserId(uuid4()),
+        decision=OutreachDecisionType.APPROVED,
+        final_message=None,
+        decided_at=datetime.now(UTC),
+        decided_by=UserId(uuid4()),
+    )
+    envelope = build_envelope(Topic.OUTREACH_APPROVED, decision, producer="outreach-service")
+
+    with pytest.raises(TimeoutError):
+        consumers_module.handle_outreach_approved(envelope)

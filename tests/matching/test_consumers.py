@@ -397,6 +397,32 @@ def test_handle_job_discovered_sync_wrapper_drives_the_async_body(monkeypatch) -
     assert calls == [envelope]
 
 
+def test_handle_job_discovered_sync_wrapper_enforces_a_hard_timeout(monkeypatch) -> None:
+    """A handler that never returns must not block this thread forever —
+    `asyncio.wait_for`'s `DEFAULT_HANDLER_TIMEOUT_SECONDS` ceiling (see that
+    constant's docstring — added after job-matching-service's handler froze
+    indefinitely on an outbound HTTP call) must fire and surface as a plain
+    `TimeoutError` so `EventConsumer`'s existing retry/DLQ path can take
+    over. Patches the ceiling to a tiny value so this test does not
+    actually wait minutes.
+    """
+    import asyncio
+
+    monkeypatch.setattr(consumers_module, "DEFAULT_HANDLER_TIMEOUT_SECONDS", 0.05)
+
+    async def hanging_handler(envelope: object) -> None:
+        await asyncio.sleep(999)
+
+    monkeypatch.setattr(consumers_module, "_handle_job_discovered_async", hanging_handler)
+
+    user_id = UserId(uuid4())
+    job = make_normalized_job(user_id)
+    envelope = build_envelope(Topic.JOBS_DISCOVERED, job, producer="job-ingestion-service")
+
+    with pytest.raises(TimeoutError):
+        consumers_module.handle_job_discovered(envelope)
+
+
 @pytest.mark.asyncio
 async def test_handle_profile_updated_is_deferred() -> None:
     from shared.events.payloads import ProfileUpdateSummary

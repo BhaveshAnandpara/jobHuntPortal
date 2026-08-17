@@ -6,6 +6,7 @@ ranking are Contact Discovery Service's job, not this layer's), and that
 provider failures are normalized to CONTACT_SEARCH_FAILED.
 """
 
+import httpx
 import pytest
 
 from infrastructure.external.config import ExternalClientConfig, RetryPolicy
@@ -14,7 +15,11 @@ from infrastructure.external.people_search import (
     PeopleSearchClient,
     PeopleSearchQuery,
     PersonSearchHit,
+    PublicWebSearchProvider,
+    SerpApiProvider,
+    SerperProvider,
     StaticPeopleSearchProvider,
+    default_people_search_provider,
 )
 
 FAST_CONFIG = ExternalClientConfig(
@@ -118,3 +123,473 @@ async def test_search_retries_then_succeeds():
 
     assert call_count["n"] == 2
     assert result == hits
+
+
+# ---------------------------------------------------------------------------
+# PublicWebSearchProvider (real, network-backed Google CSE implementation)
+# ---------------------------------------------------------------------------
+
+
+def _cse_response(items: list[dict]) -> httpx.Response:
+    return httpx.Response(200, json={"items": items} if items else {})
+
+
+@pytest.mark.asyncio
+async def test_public_web_search_provider_returns_normalized_hits():
+    # A. provider returns normalized search results.
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["key"] == "test-key"
+        assert request.url.params["cx"] == "test-engine"
+        return _cse_response(
+            [
+                {
+                    "title": "Rahul Sharma - Senior Software Engineer - JPMorgan Chase",
+                    "link": "https://www.linkedin.com/in/rahul-sharma",
+                    "snippet": "Senior Software Engineer at JPMorgan Chase",
+                }
+            ]
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = PublicWebSearchProvider(api_key="test-key", engine_id="test-engine", client=http)
+        hits = await provider.search(
+            PeopleSearchQuery(company="JPMorgan Chase", role_keywords=["Software Engineer"]),
+            timeout_seconds=5.0,
+        )
+
+    assert len(hits) == 1
+    hit = hits[0]
+    assert hit.full_name == "Rahul Sharma"
+    assert hit.headline == "Senior Software Engineer"
+    assert hit.company == "JPMorgan Chase"
+    assert hit.profile_url == "https://www.linkedin.com/in/rahul-sharma"
+    assert hit.provider == "public-web-search"
+
+
+@pytest.mark.asyncio
+async def test_public_web_search_provider_strips_linkedin_title_suffix():
+    # B. provider returns LinkedIn/public-profile URL correctly, and a
+    # trailing "| LinkedIn" title suffix does not leak into the parsed name.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _cse_response(
+            [
+                {
+                    "title": "Alex Chen - HR Manager - Acme Corp | LinkedIn",
+                    "link": "https://linkedin.com/in/alex-chen",
+                    "snippet": "HR Manager at Acme Corp",
+                }
+            ]
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = PublicWebSearchProvider(api_key="k", engine_id="e", client=http)
+        hits = await provider.search(PeopleSearchQuery(company="Acme Corp"), timeout_seconds=5.0)
+
+    assert hits[0].full_name == "Alex Chen"
+    assert hits[0].headline == "HR Manager"
+    assert hits[0].company == "Acme Corp"
+    assert hits[0].profile_url == "https://linkedin.com/in/alex-chen"
+
+
+@pytest.mark.asyncio
+async def test_public_web_search_provider_empty_results_returns_empty_list():
+    # C. empty results return [].
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _cse_response([])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = PublicWebSearchProvider(api_key="k", engine_id="e", client=http)
+        hits = await provider.search(PeopleSearchQuery(company="Nobody Inc"), timeout_seconds=5.0)
+
+    assert hits == []
+
+
+@pytest.mark.asyncio
+async def test_public_web_search_provider_dedupes_same_profile_across_subqueries():
+    # D. duplicate URLs are deduplicated — the same profile surfaces for
+    # more than one role_keyword subquery and must only appear once.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _cse_response(
+            [
+                {
+                    "title": "Jamie Rivera - Engineer - Acme",
+                    "link": "https://www.linkedin.com/in/jamie-rivera/",
+                    "snippet": "",
+                }
+            ]
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = PublicWebSearchProvider(api_key="k", engine_id="e", client=http)
+        hits = await provider.search(
+            PeopleSearchQuery(company="Acme", role_keywords=["Engineer", "Software Engineer"]),
+            timeout_seconds=5.0,
+        )
+
+    assert len(hits) == 1
+
+
+@pytest.mark.asyncio
+async def test_public_web_search_provider_does_not_guess_malformed_or_missing_fields():
+    # E. malformed/incomplete result does not cause guessing: an item with
+    # no title is skipped entirely; a title with no recognizable
+    # "Name - Headline - Company" shape keeps the literal title as the name
+    # and leaves company null rather than mis-splitting it.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _cse_response(
+            [
+                {
+                    "title": "JPMorgan Chase Careers",
+                    "link": "https://jpmorganchase.com/careers",
+                    "snippet": "Join us",
+                },
+                {
+                    "link": "https://linkedin.com/in/no-title",
+                    "snippet": "no title at all",
+                },
+            ]
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = PublicWebSearchProvider(api_key="k", engine_id="e", client=http)
+        hits = await provider.search(PeopleSearchQuery(company="JPMorgan Chase"), timeout_seconds=5.0)
+
+    assert len(hits) == 1  # the title-less item was skipped, not guessed
+    assert hits[0].full_name == "JPMorgan Chase Careers"
+    assert hits[0].headline == "Join us"  # falls back to snippet
+    assert hits[0].company is None  # never guessed
+
+
+@pytest.mark.asyncio
+async def test_public_web_search_provider_failure_normalizes_to_contact_search_failed():
+    # F. timeout/provider failure maps to the existing external error model,
+    # exercised through PeopleSearchClient (the boundary Contact Discovery
+    # actually calls).
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = PublicWebSearchProvider(api_key="k", engine_id="e", client=http)
+        client = PeopleSearchClient(provider, FAST_CONFIG)
+
+        with pytest.raises(PeopleSearchRequestError) as exc_info:
+            await client.search(PeopleSearchQuery(company="Acme"))
+
+    assert exc_info.value.provider == "public-web-search"
+
+
+@pytest.mark.asyncio
+async def test_public_web_search_provider_logs_request_and_response(caplog):
+    # Verifies the query sent and the response received are both visible in
+    # the log, so a live run's actual CSE query/result can be inspected
+    # without a debugger — without leaking the api_key or full snippets.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _cse_response(
+            [{"title": "Jamie Rivera - Engineer - Acme", "link": "https://linkedin.com/in/jamie-rivera", "snippet": ""}]
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = PublicWebSearchProvider(api_key="super-secret-key", engine_id="test-engine", client=http)
+        with caplog.at_level("INFO"):
+            await provider.search(PeopleSearchQuery(company="Acme", role_keywords=["Engineer"]), timeout_seconds=5.0)
+
+    request_lines = [r.message for r in caplog.records if "Google CSE request" in r.message]
+    response_lines = [r.message for r in caplog.records if "Google CSE response" in r.message]
+    assert request_lines and "site:linkedin.com/in" in request_lines[0] and '"Acme"' in request_lines[0]
+    assert response_lines and "item_count=1" in response_lines[0]
+    assert "super-secret-key" not in " ".join(request_lines + response_lines)
+
+
+@pytest.mark.asyncio
+async def test_public_web_search_provider_logs_response_on_http_error(caplog):
+    # A non-2xx response (bad cx/key, quota exceeded, ...) must still be
+    # visible in the log with its status/body before propagating — the
+    # success-path "Google CSE response" log never fires in this case, so
+    # without this, an HTTP error looks identical to a genuine zero-result
+    # search in the log (both end at "no contacts found" downstream).
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text='{"error": {"message": "API key not valid"}}')
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = PublicWebSearchProvider(api_key="k", engine_id="e", client=http)
+        client = PeopleSearchClient(provider, FAST_CONFIG)
+        with caplog.at_level("WARNING"):
+            with pytest.raises(PeopleSearchRequestError):
+                await client.search(PeopleSearchQuery(company="Acme"))
+
+    error_lines = [r.message for r in caplog.records if "Google CSE response" in r.message]
+    assert error_lines
+    assert "status=403" in error_lines[0]
+    assert "API key not valid" in error_lines[0]
+
+
+@pytest.mark.asyncio
+async def test_public_web_search_provider_rate_limit_retries_are_bounded():
+    # G. rate-limit (429) responses are retried under the existing bounded
+    # retry policy, never aggressively/infinitely.
+    call_count = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        call_count["n"] += 1
+        return httpx.Response(429, json={"error": "rate limited"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = PublicWebSearchProvider(api_key="k", engine_id="e", client=http)
+        client = PeopleSearchClient(provider, FAST_CONFIG)  # FAST_CONFIG: max_attempts=2
+
+        with pytest.raises(PeopleSearchRequestError):
+            await client.search(PeopleSearchQuery(company="Acme"))
+
+    assert call_count["n"] == FAST_CONFIG.retry.max_attempts
+
+
+# ---------------------------------------------------------------------------
+# SerpApiProvider (real, network-backed serpapi.com implementation)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_serpapi_provider_returns_normalized_hits():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["api_key"] == "test-key"
+        assert request.url.params["engine"] == "google"
+        assert "site:linkedin.com/in" in request.url.params["q"]
+        return httpx.Response(
+            200,
+            json={
+                "organic_results": [
+                    {
+                        "title": "Rahul Sharma - Senior Software Engineer - JPMorgan Chase",
+                        "link": "https://www.linkedin.com/in/rahul-sharma",
+                        "snippet": "Senior Software Engineer at JPMorgan Chase",
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = SerpApiProvider(api_key="test-key", client=http)
+        hits = await provider.search(
+            PeopleSearchQuery(company="JPMorgan Chase", role_keywords=["Software Engineer"]),
+            timeout_seconds=5.0,
+        )
+
+    assert len(hits) == 1
+    assert hits[0].full_name == "Rahul Sharma"
+    assert hits[0].provider == "serpapi"
+
+
+@pytest.mark.asyncio
+async def test_serpapi_provider_empty_results_returns_empty_list():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = SerpApiProvider(api_key="k", client=http)
+        hits = await provider.search(PeopleSearchQuery(company="Nobody Inc"), timeout_seconds=5.0)
+
+    assert hits == []
+
+
+@pytest.mark.asyncio
+async def test_serpapi_provider_logs_request_and_response_without_leaking_key(caplog):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"organic_results": [{"title": "A - B - C", "link": "https://linkedin.com/in/a"}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = SerpApiProvider(api_key="super-secret-key", client=http)
+        with caplog.at_level("INFO"):
+            await provider.search(PeopleSearchQuery(company="Acme"), timeout_seconds=5.0)
+
+    lines = [r.message for r in caplog.records if "SerpApi" in r.message]
+    assert any("SerpApi request" in line for line in lines)
+    assert any("SerpApi response" in line and "item_count=1" in line for line in lines)
+    assert "super-secret-key" not in " ".join(lines)
+
+
+@pytest.mark.asyncio
+async def test_serpapi_provider_logs_response_on_http_error(caplog):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, text='{"error": "Invalid API key"}')
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = SerpApiProvider(api_key="k", client=http)
+        client = PeopleSearchClient(provider, FAST_CONFIG)
+        with caplog.at_level("WARNING"):
+            with pytest.raises(PeopleSearchRequestError):
+                await client.search(PeopleSearchQuery(company="Acme"))
+
+    error_lines = [r.message for r in caplog.records if "SerpApi response" in r.message]
+    assert error_lines
+    assert "status=401" in error_lines[0]
+    assert "Invalid API key" in error_lines[0]
+
+
+# ---------------------------------------------------------------------------
+# SerperProvider (real, network-backed google.serper.dev implementation)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_serper_provider_returns_normalized_hits():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["X-API-KEY"] == "test-key"
+        assert request.method == "POST"
+        assert "site:linkedin.com/in" in request.content.decode()
+        return httpx.Response(
+            200,
+            json={
+                "organic": [
+                    {
+                        "title": "Priya Nair - Recruiter - Acme",
+                        "link": "https://www.linkedin.com/in/priya-nair",
+                        "snippet": "Recruiter at Acme",
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = SerperProvider(api_key="test-key", client=http)
+        hits = await provider.search(PeopleSearchQuery(company="Acme"), timeout_seconds=5.0)
+
+    assert len(hits) == 1
+    assert hits[0].full_name == "Priya Nair"
+    assert hits[0].provider == "serper"
+
+
+@pytest.mark.asyncio
+async def test_serper_provider_empty_results_returns_empty_list():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = SerperProvider(api_key="k", client=http)
+        hits = await provider.search(PeopleSearchQuery(company="Nobody Inc"), timeout_seconds=5.0)
+
+    assert hits == []
+
+
+@pytest.mark.asyncio
+async def test_serper_provider_logs_response_on_http_error(caplog):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text='{"message": "Not enough credits"}')
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = SerperProvider(api_key="k", client=http)
+        client = PeopleSearchClient(provider, FAST_CONFIG)
+        with caplog.at_level("WARNING"):
+            with pytest.raises(PeopleSearchRequestError):
+                await client.search(PeopleSearchQuery(company="Acme"))
+
+    error_lines = [r.message for r in caplog.records if "Serper response" in r.message]
+    assert error_lines
+    assert "status=403" in error_lines[0]
+    assert "Not enough credits" in error_lines[0]
+
+
+# ---------------------------------------------------------------------------
+# default_people_search_provider (H: PeopleSearchClient uses the provider
+# selected via configuration)
+# ---------------------------------------------------------------------------
+
+
+def test_default_provider_falls_back_to_static_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("PEOPLE_SEARCH_PROVIDER", raising=False)
+
+    provider = default_people_search_provider()
+
+    assert isinstance(provider, StaticPeopleSearchProvider)
+
+
+def test_default_provider_falls_back_to_static_when_credentials_missing(monkeypatch):
+    monkeypatch.setenv("PEOPLE_SEARCH_PROVIDER", "google-cse")
+    monkeypatch.delenv("PEOPLE_SEARCH_API_KEY", raising=False)
+    monkeypatch.delenv("PEOPLE_SEARCH_ENGINE_ID", raising=False)
+
+    provider = default_people_search_provider()
+
+    assert isinstance(provider, StaticPeopleSearchProvider)
+
+
+def test_default_provider_resolves_public_web_search_when_configured(monkeypatch):
+    monkeypatch.setenv("PEOPLE_SEARCH_PROVIDER", "google-cse")
+    monkeypatch.setenv("PEOPLE_SEARCH_API_KEY", "test-key")
+    monkeypatch.setenv("PEOPLE_SEARCH_ENGINE_ID", "test-engine")
+
+    provider = default_people_search_provider()
+
+    assert isinstance(provider, PublicWebSearchProvider)
+    assert provider.name == "public-web-search"
+
+
+def test_default_provider_falls_back_to_static_when_serpapi_key_missing(monkeypatch):
+    monkeypatch.setenv("PEOPLE_SEARCH_PROVIDER", "serpapi")
+    monkeypatch.delenv("PEOPLE_SEARCH_API_KEY", raising=False)
+
+    provider = default_people_search_provider()
+
+    assert isinstance(provider, StaticPeopleSearchProvider)
+
+
+def test_default_provider_resolves_serpapi_when_configured(monkeypatch):
+    monkeypatch.setenv("PEOPLE_SEARCH_PROVIDER", "serpapi")
+    monkeypatch.setenv("PEOPLE_SEARCH_API_KEY", "test-key")
+    monkeypatch.delenv("PEOPLE_SEARCH_ENGINE_ID", raising=False)
+
+    provider = default_people_search_provider()
+
+    assert isinstance(provider, SerpApiProvider)
+    assert provider.name == "serpapi"
+
+
+def test_default_provider_falls_back_to_static_when_serper_key_missing(monkeypatch):
+    monkeypatch.setenv("PEOPLE_SEARCH_PROVIDER", "serper")
+    monkeypatch.delenv("PEOPLE_SEARCH_API_KEY", raising=False)
+
+    provider = default_people_search_provider()
+
+    assert isinstance(provider, StaticPeopleSearchProvider)
+
+
+def test_default_provider_resolves_serper_when_configured(monkeypatch):
+    monkeypatch.setenv("PEOPLE_SEARCH_PROVIDER", "serper")
+    monkeypatch.setenv("PEOPLE_SEARCH_API_KEY", "test-key")
+
+    provider = default_people_search_provider()
+
+    assert isinstance(provider, SerperProvider)
+    assert provider.name == "serper"
+
+
+# ---------------------------------------------------------------------------
+# I: Contact Discovery consumes provider output without any contract change
+# ---------------------------------------------------------------------------
+
+
+def test_public_web_search_provider_hits_flow_into_contact_candidates_unchanged():
+    from shared.types.enums import ContactType
+    from workflows.langgraph.contact_discovery.discovery import hits_to_candidates
+
+    # Same PersonSearchHit shape PublicWebSearchProvider.search() returns —
+    # proves Contact Discovery's existing hits_to_candidates needs no
+    # contract change to consume real provider output.
+    hit = PersonSearchHit(
+        full_name="Priya Nair",
+        provider="public-web-search",
+        headline="Recruiter",
+        company="Acme",
+        profile_url="https://linkedin.com/in/priya-nair",
+        email=None,
+    )
+
+    candidates = hits_to_candidates([hit], [ContactType.RECRUITER], default_company="Acme")
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.full_name == "Priya Nair"
+    assert candidate.headline == "Recruiter"
+    assert candidate.company == "Acme"
+    assert candidate.profile_url == "https://linkedin.com/in/priya-nair"
+    assert candidate.source == "public-web-search"
+    assert candidate.contact_type == ContactType.RECRUITER
