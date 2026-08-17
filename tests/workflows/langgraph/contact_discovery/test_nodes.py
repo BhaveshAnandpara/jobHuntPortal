@@ -22,7 +22,9 @@ from workflows.langgraph.contact_discovery.discovery import (
     ContactClassificationBatch,
     ContactSearchPlan,
     HitClassification,
+    RankedRelevanceSignals,
     RelevanceSignals,
+    RelevanceSignalsBatch,
 )
 from workflows.langgraph.contact_discovery.nodes import (
     persist_and_publish,
@@ -175,6 +177,49 @@ async def test_search_contacts_classification_failure_falls_back_to_other() -> N
     assert result["errors"][0].error_code == ErrorCode.LLM_PROVIDER_ERROR
 
 
+async def test_search_contacts_drops_hits_with_no_confirmed_same_company_evidence() -> None:
+    """A hit whose parsed/headline-mentioned company doesn't match the
+    target company at all (no evidence they work there) must not survive
+    into `candidates` — only a hit search_contacts can actually confirm
+    belongs to the target company should reach ranking/persistence."""
+    hits = [
+        make_hit(
+            full_name="Jordan Smith",
+            headline="Mechanical Design Engineer",
+            company="Acme Robotics",  # matches _initial_state()'s default company
+        ),
+        make_hit(
+            full_name="Unrelated Person",
+            headline="Frontend Engineer",
+            company="Some Other Company",  # confirmed, but a different company entirely
+        ),
+        make_hit(
+            full_name="No Evidence Person",
+            headline="Frontend Engineer",  # never mentions the target company at all
+            company=None,
+        ),
+    ]
+    nodes_module.set_people_search_client(FakePeopleSearchClient(hits))
+    nodes_module.set_llm_client(
+        FakeLLMClient(
+            {
+                "Target opportunity:": ContactClassificationBatch(
+                    classifications=[
+                        HitClassification(index=0, contact_type=ContactType.PRACTITIONER),
+                        HitClassification(index=1, contact_type=ContactType.PRACTITIONER),
+                        HitClassification(index=2, contact_type=ContactType.PRACTITIONER),
+                    ]
+                ),
+            },
+            default=ContactSearchPlan(role_keywords=["Mechanical Design Engineer"]),
+        )
+    )
+
+    result = await search_contacts(_initial_state())
+
+    assert [c.full_name for c in result["candidates"]] == ["Jordan Smith"]
+
+
 # ---------------------------------------------------------------------------
 # rank_contacts
 # ---------------------------------------------------------------------------
@@ -183,14 +228,21 @@ async def test_search_contacts_classification_failure_falls_back_to_other() -> N
 async def test_rank_contacts_orders_by_relevance_score_descending() -> None:
     strong = _candidate(full_name="Strong Fit", headline="Mechanical Design Engineer")
     weak = _candidate(full_name="Weak Fit", headline="Marketing Coordinator")
+    # Single batched call scores every candidate at once — index 0 is
+    # "Weak Fit", index 1 is "Strong Fit", matching the candidates list
+    # order passed to rank_contacts below (deliberately out of rank order).
     nodes_module.set_llm_client(
         FakeLLMClient(
             {
-                "Contact: Strong Fit": RelevanceSignals(
-                    role_similarity=0.95, department_relevance=0.9, seniority_fit=0.8
-                ),
-                "Contact: Weak Fit": RelevanceSignals(
-                    role_similarity=0.05, department_relevance=0.1, seniority_fit=0.2
+                "Score EVERY contact": RelevanceSignalsBatch(
+                    signals=[
+                        RankedRelevanceSignals(
+                            index=0, role_similarity=0.05, department_relevance=0.1, seniority_fit=0.2
+                        ),
+                        RankedRelevanceSignals(
+                            index=1, role_similarity=0.95, department_relevance=0.9, seniority_fit=0.8
+                        ),
+                    ]
                 ),
             }
         )
@@ -203,6 +255,53 @@ async def test_rank_contacts_orders_by_relevance_score_descending() -> None:
     assert [r.full_name for r in ranked] == ["Strong Fit", "Weak Fit"]
     assert ranked[0].relevance_score > ranked[1].relevance_score
     assert result["errors"] == []
+
+
+async def test_rank_contacts_confirmed_same_company_outranks_higher_scoring_unconfirmed() -> None:
+    """A candidate with strong role-similarity but no evidence of actually
+    working at the target company (`company_confirmed=False` — e.g. their
+    profile just happened to surface on a company-scoped search) must
+    never outrank a confirmed same-company candidate, even one with a much
+    weaker raw relevance_score — otherwise the top of the ranked list can
+    be dominated by people who don't work at the company at all."""
+    unconfirmed_high_score = _candidate(
+        full_name="Unconfirmed High Scorer",
+        headline="Mechanical Design Engineer",
+        company="Acme Robotics",
+        company_confirmed=False,
+    )
+    confirmed_low_score = _candidate(
+        full_name="Confirmed Low Scorer",
+        headline="Marketing Coordinator",
+        company="Acme Robotics",
+        company_confirmed=True,
+    )
+    nodes_module.set_llm_client(
+        FakeLLMClient(
+            {
+                "Score EVERY contact": RelevanceSignalsBatch(
+                    signals=[
+                        RankedRelevanceSignals(
+                            index=0, role_similarity=0.95, department_relevance=0.9, seniority_fit=0.8
+                        ),
+                        RankedRelevanceSignals(
+                            index=1, role_similarity=0.05, department_relevance=0.1, seniority_fit=0.2
+                        ),
+                    ]
+                ),
+            }
+        )
+    )
+
+    state = _initial_state(candidates=[unconfirmed_high_score, confirmed_low_score])
+    result = await rank_contacts(state)
+
+    ranked = result["ranked_contacts"]
+    assert ranked[0].relevance_score < ranked[1].relevance_score  # raw score is inverted...
+    assert [r.full_name for r in ranked] == [
+        "Confirmed Low Scorer",
+        "Unconfirmed High Scorer",
+    ]  # ...but confirmed same-company still sorts first
 
 
 async def test_rank_contacts_empty_candidates_returns_empty_ranked_contacts() -> None:
@@ -296,8 +395,12 @@ async def test_persist_and_publish_persists_contacts_and_scores_at_ranked_status
     nodes_module.set_llm_client(
         FakeLLMClient(
             {
-                "Contact: Jordan Smith": RelevanceSignals(
-                    role_similarity=0.9, department_relevance=0.8, seniority_fit=0.7
+                "Score EVERY contact": RelevanceSignalsBatch(
+                    signals=[
+                        RankedRelevanceSignals(
+                            index=0, role_similarity=0.9, department_relevance=0.8, seniority_fit=0.7
+                        ),
+                    ]
                 ),
             }
         )

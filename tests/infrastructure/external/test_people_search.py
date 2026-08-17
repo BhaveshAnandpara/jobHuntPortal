@@ -343,6 +343,54 @@ async def test_public_web_search_provider_rate_limit_retries_are_bounded():
     assert call_count["n"] == FAST_CONFIG.retry.max_attempts
 
 
+@pytest.mark.asyncio
+async def test_public_web_search_provider_reduces_multi_region_location_to_primary():
+    # H. a multi-region location string (e.g. a remote-first job posting's
+    # "United States & Canada, India, United Kingdom, Brazil, European
+    # Union") must not be appended to the query in full — Google ANDs
+    # every unquoted word together, so all ~9 words would need to appear
+    # on one profile, which is effectively unsatisfiable and silently
+    # zeroes out the search. Only the first region should end up in the
+    # query string.
+    captured: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["q"] = request.url.params["q"]
+        return _cse_response([])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = PublicWebSearchProvider(api_key="k", engine_id="e", client=http)
+        await provider.search(
+            PeopleSearchQuery(
+                company="Infisical",
+                role_keywords=["Full Stack Engineer"],
+                location="United States & Canada, India, United Kingdom, Brazil, European Union",
+            ),
+            timeout_seconds=5.0,
+        )
+
+    assert "United States & Canada" in captured["q"]
+    assert "India" not in captured["q"]
+    assert "Brazil" not in captured["q"]
+
+
+@pytest.mark.asyncio
+async def test_public_web_search_provider_single_location_passes_through():
+    captured: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["q"] = request.url.params["q"]
+        return _cse_response([])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = PublicWebSearchProvider(api_key="k", engine_id="e", client=http)
+        await provider.search(
+            PeopleSearchQuery(company="Acme", location="Remote"), timeout_seconds=5.0
+        )
+
+    assert "Remote" in captured["q"]
+
+
 # ---------------------------------------------------------------------------
 # SerpApiProvider (real, network-backed serpapi.com implementation)
 # ---------------------------------------------------------------------------
@@ -593,3 +641,85 @@ def test_public_web_search_provider_hits_flow_into_contact_candidates_unchanged(
     assert candidate.profile_url == "https://linkedin.com/in/priya-nair"
     assert candidate.source == "public-web-search"
     assert candidate.contact_type == ContactType.RECRUITER
+
+
+# ---------------------------------------------------------------------------
+# J: hits_to_candidates' company_confirmed — a candidate must never look
+# same-company just because the search happened to be scoped to that
+# company; only real evidence (a parsed company field, or the company's
+# own name in the candidate's own headline) counts.
+# ---------------------------------------------------------------------------
+
+
+def test_hits_to_candidates_confirms_company_when_provider_parsed_it():
+    from shared.types.enums import ContactType
+    from workflows.langgraph.contact_discovery.discovery import hits_to_candidates
+
+    hit = PersonSearchHit(
+        full_name="Priya Nair", provider="serper", headline="Recruiter", company="Acme"
+    )
+
+    [candidate] = hits_to_candidates([hit], [ContactType.RECRUITER], default_company="Acme")
+
+    assert candidate.company_confirmed is True
+
+
+def test_hits_to_candidates_confirms_company_mentioned_inline_in_headline():
+    """Title didn't split into its own company segment (common — Google
+    truncates/reformats titles unpredictably), but the target company's own
+    name is right there in the candidate's headline text — real evidence,
+    not a default."""
+    from shared.types.enums import ContactType
+    from workflows.langgraph.contact_discovery.discovery import hits_to_candidates
+
+    hit = PersonSearchHit(
+        full_name="Gaurav Pareek",
+        provider="serpapi",
+        headline="Software Engineer @Viamedia | Elixir",
+        company=None,
+    )
+
+    [candidate] = hits_to_candidates([hit], [ContactType.PRACTITIONER], default_company="Viamedia")
+
+    assert candidate.company_confirmed is True
+    assert candidate.company == "Viamedia"
+
+
+def test_hits_to_candidates_leaves_company_unconfirmed_with_no_evidence():
+    """No parsed company field, and the target company's name never
+    appears in the headline at all — the hit only surfaced because some
+    other part of the indexed page matched the site-restricted search.
+    Must not be silently treated as same-company."""
+    from shared.types.enums import ContactType
+    from workflows.langgraph.contact_discovery.discovery import hits_to_candidates
+
+    hit = PersonSearchHit(
+        full_name="Carol Jenkins",
+        provider="serpapi",
+        headline="Frontend Engineer / Web Developer",
+        company=None,
+    )
+
+    [candidate] = hits_to_candidates([hit], [ContactType.PRACTITIONER], default_company="Viamedia")
+
+    assert candidate.company_confirmed is False
+    assert candidate.company == "Viamedia"  # still a display value, just not confirmed
+
+
+def test_hits_to_candidates_headline_mention_requires_word_boundary():
+    """"Via" must not confirm a match against a headline that merely
+    contains "Reliable" or some other word starting with those letters —
+    only a distinct word/phrase match counts."""
+    from shared.types.enums import ContactType
+    from workflows.langgraph.contact_discovery.discovery import hits_to_candidates
+
+    hit = PersonSearchHit(
+        full_name="Someone Else",
+        provider="serpapi",
+        headline="Reliable Backend Engineer",
+        company=None,
+    )
+
+    [candidate] = hits_to_candidates([hit], [ContactType.PRACTITIONER], default_company="Via")
+
+    assert candidate.company_confirmed is False

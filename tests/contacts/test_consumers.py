@@ -40,7 +40,8 @@ from workflows.langgraph.contact_discovery.discovery import (
     ContactClassificationBatch,
     ContactSearchPlan,
     HitClassification,
-    RelevanceSignals,
+    RankedRelevanceSignals,
+    RelevanceSignalsBatch,
 )
 
 
@@ -59,9 +60,14 @@ def _wire(
     llm_results = {}
     if classifications is not None:
         llm_results["Target opportunity:"] = classifications
-    for hit in hits or []:
-        llm_results[f"Contact: {hit.full_name}"] = RelevanceSignals(
-            role_similarity=0.8, department_relevance=0.7, seniority_fit=0.6
+    if hits:
+        llm_results["Score EVERY contact"] = RelevanceSignalsBatch(
+            signals=[
+                RankedRelevanceSignals(
+                    index=i, role_similarity=0.8, department_relevance=0.7, seniority_fit=0.6
+                )
+                for i in range(len(hits))
+            ]
         )
     nodes_module.set_llm_client(
         FakeLLMClient(llm_results, default=ContactSearchPlan(role_keywords=["Engineer"]))

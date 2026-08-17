@@ -23,6 +23,8 @@ code, never a per-profession branch).
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field
 
 from infrastructure.external.people_search import PersonSearchHit
@@ -144,24 +146,76 @@ def classify_hits(
     return [by_index.get(i, ContactType.OTHER) for i in range(len(hits))]
 
 
+def _company_mentioned_in_headline(headline: str | None, company: str) -> bool:
+    """True when the target company's own name appears in the candidate's
+    own headline text as a distinct word/phrase (word-boundary match, not
+    an arbitrary substring — so "Via" doesn't match "Reliable") — e.g.
+    "Software Engineer @Viamedia" or "Creative Specialist at Viamedia".
+    This is confirmation, not a guess: unlike defaulting an unparsed
+    company field, the company's own name is literally present in text the
+    candidate wrote about themselves, even when `_parse_search_item`
+    couldn't split it into its own dedicated title segment.
+    """
+    company = company.strip()
+    if not headline or not company:
+        return False
+    pattern = r"(?<!\w)" + re.escape(company) + r"(?!\w)"
+    return re.search(pattern, headline, re.IGNORECASE) is not None
+
+
 def hits_to_candidates(
     hits: list[PersonSearchHit],
     contact_types: list[ContactType],
     *,
     default_company: str,
 ) -> list[ContactCandidate]:
-    return [
-        ContactCandidate(
-            full_name=hit.full_name,
-            headline=hit.headline,
-            company=hit.company or default_company,
-            contact_type=contact_type,
-            profile_url=hit.profile_url,
-            email=hit.email,
-            source=hit.provider,
+    """A candidate's company is only ever `company_confirmed=True` when
+    there is real evidence for it: either `_parse_search_item` split a
+    distinct company segment out of the hit's title, or the target
+    company's own name appears in the candidate's headline text
+    (`_company_mentioned_in_headline`). Everything else falls back to
+    `default_company` as a *display* value only, `company_confirmed=False`
+    — the candidate's name/profile merely matched the site-restricted
+    search query for that company, which unrelated profiles that only
+    happen to mention it elsewhere on their page can also do. Downstream,
+    `rank_contacts` uses `company_confirmed` both to gate the same-company
+    scoring signal and to keep unconfirmed candidates from outranking
+    confirmed ones.
+    """
+    candidates: list[ContactCandidate] = []
+    for hit, contact_type in zip(hits, contact_types, strict=True):
+        if hit.company is not None:
+            company, confirmed = hit.company, True
+        elif _company_mentioned_in_headline(hit.headline, default_company):
+            company, confirmed = default_company, True
+        else:
+            company, confirmed = default_company, False
+        candidates.append(
+            ContactCandidate(
+                full_name=hit.full_name,
+                headline=hit.headline,
+                company=company,
+                company_confirmed=confirmed,
+                contact_type=contact_type,
+                profile_url=hit.profile_url,
+                email=hit.email,
+                source=hit.provider,
+            )
         )
-        for hit, contact_type in zip(hits, contact_types, strict=True)
-    ]
+    return candidates
+
+
+def is_confirmed_same_company(candidate: ContactCandidate, company: str) -> bool:
+    """True only when `candidate` carries real, confirmed evidence
+    (`company_confirmed`) that its own company text actually matches the
+    target `company` — never merely because the candidate's profile
+    surfaced on a search scoped to that company. Used by `search_contacts`
+    to drop candidates with no real evidence of working at the target
+    company, rather than passing them through to ranking/persistence where
+    they could otherwise still surface as a "referral contact" for a
+    company they may have no connection to at all.
+    """
+    return candidate.company_confirmed and same_company(candidate.company, company)
 
 
 # ---------------------------------------------------------------------------
@@ -184,11 +238,30 @@ class RelevanceSignals(BaseModel):
     reasoning: str = ""
 
 
-def build_ranking_prompt(company: str, title: str, candidate: ContactCandidate) -> str:
+class RankedRelevanceSignals(BaseModel):
+    index: int
+    role_similarity: float = Field(ge=0.0, le=1.0)
+    department_relevance: float = Field(ge=0.0, le=1.0)
+    seniority_fit: float = Field(ge=0.0, le=1.0)
+    reasoning: str = ""
+
+
+class RelevanceSignalsBatch(BaseModel):
+    signals: list[RankedRelevanceSignals]
+
+
+def build_ranking_batch_prompt(
+    company: str, title: str, candidates: list[ContactCandidate]
+) -> str:
+    lines = "\n".join(
+        f"{i}. {c.full_name} — {c.headline or '(no headline)'} ({c.contact_type.value})"
+        for i, c in enumerate(candidates)
+    )
     return (
-        "Score this contact's relevance for referral/networking outreach "
-        "about the job opportunity below. Score each factor from 0.0 (no "
-        "fit) to 1.0 (excellent fit):\n"
+        "Score EVERY contact listed below for referral/networking outreach "
+        "relevance about the job opportunity given. Score each factor from "
+        "0.0 (no fit) to 1.0 (excellent fit). Return one scored entry per "
+        "index listed below, using the SAME index numbers:\n"
         "- role_similarity: how closely the contact's own work (per their "
         "headline) resembles the job's actual work\n"
         "- department_relevance: how likely the contact sits in the same "
@@ -200,20 +273,45 @@ def build_ranking_prompt(company: str, title: str, candidate: ContactCandidate) 
         "direct manager)\n\n"
         f"Job title: {title}\n"
         f"Company: {company}\n\n"
-        f"Contact: {candidate.full_name} — "
-        f"{candidate.headline or '(no headline)'} "
-        f"({candidate.contact_type.value})\n"
+        f"{lines}\n"
     )
 
 
-def score_candidate_with_llm(
-    llm_client: LLMClient, company: str, title: str, candidate: ContactCandidate
-) -> RelevanceSignals:
-    return llm_client.complete_structured(
-        build_ranking_prompt(company, title, candidate),
-        RelevanceSignals,
+def score_candidates_with_llm(
+    llm_client: LLMClient, company: str, title: str, candidates: list[ContactCandidate]
+) -> list[RelevanceSignals | None]:
+    """Scores every candidate in ONE LLM call instead of one call per
+    candidate — the same index-aligned batching pattern `classify_hits`
+    already uses for hit classification, applied here to cut
+    `rank_contacts`' LLM call count from O(candidates) to O(1) per job.
+
+    Returns one `RelevanceSignals` per candidate, aligned by position.
+    `None` at an index means the model didn't return a scored entry for
+    it — defensive against a response that validates against
+    `RelevanceSignalsBatch`'s schema but doesn't actually cover every
+    index — and the caller falls back to rule-based signals for just that
+    candidate, not the whole batch.
+    """
+    batch = llm_client.complete_structured(
+        build_ranking_batch_prompt(company, title, candidates),
+        RelevanceSignalsBatch,
         system=_RANKING_SYSTEM_PROMPT,
     )
+    by_index = {item.index: item for item in batch.signals}
+    results: list[RelevanceSignals | None] = []
+    for i in range(len(candidates)):
+        item = by_index.get(i)
+        results.append(
+            None
+            if item is None
+            else RelevanceSignals(
+                role_similarity=item.role_similarity,
+                department_relevance=item.department_relevance,
+                seniority_fit=item.seniority_fit,
+                reasoning=item.reasoning,
+            )
+        )
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -295,15 +393,18 @@ __all__ = [
     "ContactClassificationBatch",
     "ContactSearchPlan",
     "HitClassification",
+    "RankedRelevanceSignals",
     "RelevanceSignals",
+    "RelevanceSignalsBatch",
     "build_classification_prompt",
-    "build_ranking_prompt",
+    "build_ranking_batch_prompt",
     "build_search_plan",
     "build_search_plan_prompt",
     "classify_hits",
     "compute_relevance_score",
     "hits_to_candidates",
+    "is_confirmed_same_company",
     "rule_based_role_similarity",
     "same_company",
-    "score_candidate_with_llm",
+    "score_candidates_with_llm",
 ]

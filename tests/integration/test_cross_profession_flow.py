@@ -33,7 +33,8 @@ from workflows.langgraph.contact_discovery.discovery import (
     ContactClassificationBatch,
     ContactSearchPlan,
     HitClassification,
-    RelevanceSignals,
+    RankedRelevanceSignals,
+    RelevanceSignalsBatch,
 )
 from workflows.langgraph.job_matching.scoring import ProfileScoringOutput
 from workflows.langgraph.outreach_generation.generation import OutreachDraftContent
@@ -226,8 +227,12 @@ async def test_cross_profession_flow_uses_identical_code_path(
                         HitClassification(index=0, contact_type=scenario["contact_type"])
                     ]
                 ),
-                contact_hit.full_name: RelevanceSignals(
-                    role_similarity=0.9, department_relevance=0.9, seniority_fit=0.8
+                "Score EVERY contact": RelevanceSignalsBatch(
+                    signals=[
+                        RankedRelevanceSignals(
+                            index=0, role_similarity=0.9, department_relevance=0.9, seniority_fit=0.8
+                        ),
+                    ]
                 ),
             }
         ),

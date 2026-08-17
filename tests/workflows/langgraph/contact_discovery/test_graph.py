@@ -36,7 +36,8 @@ from workflows.langgraph.contact_discovery.discovery import (
     ContactClassificationBatch,
     ContactSearchPlan,
     HitClassification,
-    RelevanceSignals,
+    RankedRelevanceSignals,
+    RelevanceSignalsBatch,
 )
 from workflows.langgraph.contact_discovery.graph import build_graph
 
@@ -94,9 +95,9 @@ async def test_software_engineering_opportunity_ranks_technical_contacts(
 ) -> None:
     job_id, user_id = JobId(uuid4()), UserId(uuid4())
     hits = [
-        make_hit(full_name="Priya Patel", headline="Staff Software Engineer"),
-        make_hit(full_name="Sam Lee", headline="Engineering Manager"),
-        make_hit(full_name="Alex Kim", headline="Technical Recruiter"),
+        make_hit(full_name="Priya Patel", headline="Staff Software Engineer", company="Acme Software"),
+        make_hit(full_name="Sam Lee", headline="Engineering Manager", company="Acme Software"),
+        make_hit(full_name="Alex Kim", headline="Technical Recruiter", company="Acme Software"),
     ]
     classifications = ContactClassificationBatch(
         classifications=[
@@ -106,14 +107,18 @@ async def test_software_engineering_opportunity_ranks_technical_contacts(
         ]
     )
     ranking_signals = {
-        "Contact: Priya Patel": RelevanceSignals(
-            role_similarity=0.95, department_relevance=0.9, seniority_fit=0.8
-        ),
-        "Contact: Sam Lee": RelevanceSignals(
-            role_similarity=0.7, department_relevance=0.85, seniority_fit=0.75
-        ),
-        "Contact: Alex Kim": RelevanceSignals(
-            role_similarity=0.3, department_relevance=0.4, seniority_fit=0.5
+        "Score EVERY contact": RelevanceSignalsBatch(
+            signals=[
+                RankedRelevanceSignals(
+                    index=0, role_similarity=0.95, department_relevance=0.9, seniority_fit=0.8
+                ),
+                RankedRelevanceSignals(
+                    index=1, role_similarity=0.7, department_relevance=0.85, seniority_fit=0.75
+                ),
+                RankedRelevanceSignals(
+                    index=2, role_similarity=0.3, department_relevance=0.4, seniority_fit=0.5
+                ),
+            ]
         ),
     }
     broker = _wire(session_factory, hits=hits, classifications=classifications, ranking_signals=ranking_signals)
@@ -156,14 +161,18 @@ async def test_mechanical_engineering_opportunity_ranks_design_contacts(session_
         ]
     )
     ranking_signals = {
-        "Contact: Jordan Smith": RelevanceSignals(
-            role_similarity=0.92, department_relevance=0.88, seniority_fit=0.7
-        ),
-        "Contact: Riley Chen": RelevanceSignals(
-            role_similarity=0.8, department_relevance=0.85, seniority_fit=0.8
-        ),
-        "Contact: Morgan Blake": RelevanceSignals(
-            role_similarity=0.25, department_relevance=0.3, seniority_fit=0.4
+        "Score EVERY contact": RelevanceSignalsBatch(
+            signals=[
+                RankedRelevanceSignals(
+                    index=0, role_similarity=0.92, department_relevance=0.88, seniority_fit=0.7
+                ),
+                RankedRelevanceSignals(
+                    index=1, role_similarity=0.8, department_relevance=0.85, seniority_fit=0.8
+                ),
+                RankedRelevanceSignals(
+                    index=2, role_similarity=0.25, department_relevance=0.3, seniority_fit=0.4
+                ),
+            ]
         ),
     }
     broker = _wire(session_factory, hits=hits, classifications=classifications, ranking_signals=ranking_signals)
@@ -192,9 +201,9 @@ async def test_mechanical_engineering_opportunity_ranks_design_contacts(session_
 async def test_hr_opportunity_ranks_recruiting_contacts(session_factory) -> None:
     job_id, user_id = JobId(uuid4()), UserId(uuid4())
     hits = [
-        make_hit(full_name="Casey Nguyen", headline="Talent Acquisition Specialist"),
-        make_hit(full_name="Drew Patel", headline="HR Business Partner"),
-        make_hit(full_name="Taylor Reed", headline="VP of People"),
+        make_hit(full_name="Casey Nguyen", headline="Talent Acquisition Specialist", company="Acme Corp"),
+        make_hit(full_name="Drew Patel", headline="HR Business Partner", company="Acme Corp"),
+        make_hit(full_name="Taylor Reed", headline="VP of People", company="Acme Corp"),
     ]
     classifications = ContactClassificationBatch(
         classifications=[
@@ -204,14 +213,18 @@ async def test_hr_opportunity_ranks_recruiting_contacts(session_factory) -> None
         ]
     )
     ranking_signals = {
-        "Contact: Casey Nguyen": RelevanceSignals(
-            role_similarity=0.9, department_relevance=0.9, seniority_fit=0.75
-        ),
-        "Contact: Drew Patel": RelevanceSignals(
-            role_similarity=0.85, department_relevance=0.9, seniority_fit=0.7
-        ),
-        "Contact: Taylor Reed": RelevanceSignals(
-            role_similarity=0.4, department_relevance=0.6, seniority_fit=0.5
+        "Score EVERY contact": RelevanceSignalsBatch(
+            signals=[
+                RankedRelevanceSignals(
+                    index=0, role_similarity=0.9, department_relevance=0.9, seniority_fit=0.75
+                ),
+                RankedRelevanceSignals(
+                    index=1, role_similarity=0.85, department_relevance=0.9, seniority_fit=0.7
+                ),
+                RankedRelevanceSignals(
+                    index=2, role_similarity=0.4, department_relevance=0.6, seniority_fit=0.5
+                ),
+            ]
         ),
     }
     broker = _wire(session_factory, hits=hits, classifications=classifications, ranking_signals=ranking_signals)

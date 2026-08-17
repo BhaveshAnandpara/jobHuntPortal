@@ -165,6 +165,24 @@ def deduplicate_hits(hits: Sequence[PersonSearchHit]) -> list[PersonSearchHit]:
     return deduped
 
 
+def _primary_location(location: str) -> str:
+    """Reduces `location` to just its first comma-separated segment before
+    it goes into an unquoted (loose, bag-of-words) part of the search
+    query. Google ANDs every unquoted word together, so a location that is
+    actually a multi-region list — e.g. a remote-first job posting's
+    "United States & Canada, India, United Kingdom, Brazil, European
+    Union" — would otherwise demand all ~9 of those words appear on a
+    single LinkedIn profile simultaneously, which is effectively
+    unsatisfiable and silently zeroes out the search. Using only the
+    primary region keeps location as the soft relevance signal it was
+    always meant to be (unlike `company`/`role_keyword`, it's never quoted
+    as a hard requirement) without the multi-region case defeating the
+    search entirely. A single-value location (the common case — "Remote",
+    "San Francisco, CA") passes through unchanged aside from the split.
+    """
+    return location.split(",")[0].strip()
+
+
 class _SiteRestrictedSearchProvider:
     """Shared query-building, role-keyword fan-out, and dedup logic for any
     provider that accepts a free-text `q` string with `site:` operator
@@ -210,7 +228,7 @@ class _SiteRestrictedSearchProvider:
         if role_keyword:
             parts.append(f'"{role_keyword}"')
         if query.location:
-            parts.append(query.location)
+            parts.append(_primary_location(query.location))
         return " ".join(parts)
 
     async def _search_one(

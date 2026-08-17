@@ -50,7 +50,8 @@ from workflows.langgraph.contact_discovery.discovery import (
     ContactClassificationBatch,
     ContactSearchPlan,
     HitClassification,
-    RelevanceSignals,
+    RankedRelevanceSignals,
+    RelevanceSignalsBatch,
 )
 from workflows.langgraph.job_matching.scoring import ProfileScoringOutput
 from workflows.langgraph.outreach_generation.generation import OutreachDraftContent
@@ -133,8 +134,12 @@ async def _drive_to_outreach_generated(harness: IntegrationHarness) -> tuple[str
                         HitClassification(index=0, contact_type=ContactType.HIRING_MANAGER)
                     ]
                 ),
-                "Sam Lee": RelevanceSignals(
-                    role_similarity=0.9, department_relevance=0.9, seniority_fit=0.8
+                "Score EVERY contact": RelevanceSignalsBatch(
+                    signals=[
+                        RankedRelevanceSignals(
+                            index=0, role_similarity=0.9, department_relevance=0.9, seniority_fit=0.8
+                        ),
+                    ]
                 ),
             }
         ),

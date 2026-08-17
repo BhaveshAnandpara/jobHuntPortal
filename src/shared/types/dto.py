@@ -150,6 +150,16 @@ class ContactCandidate(BaseModel):
     full_name: str
     headline: str | None = None
     company: str
+    company_confirmed: bool = True
+    """False when `company` was filled in from the target job's company as
+    a display fallback (the search provider's own hit carried no parsed
+    company — see `hits_to_candidates`), not because this candidate is
+    actually confirmed to work there. `rank_contacts` must not treat such a
+    candidate as same-company just because the text happens to match.
+    Defaults `True` so directly-constructed candidates (tests, and any
+    future producer that already verified the company) keep the old
+    same-company-eligible behavior.
+    """
     contact_type: ContactType
     profile_url: str | None = None
     email: str | None = None

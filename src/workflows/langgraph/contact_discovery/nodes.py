@@ -46,8 +46,9 @@ from workflows.langgraph.contact_discovery.discovery import (
     classify_hits,
     compute_relevance_score,
     hits_to_candidates,
+    is_confirmed_same_company,
     rule_based_role_similarity,
-    score_candidate_with_llm,
+    score_candidates_with_llm,
 )
 from workflows.langgraph.contact_discovery.discovery import (
     same_company as _same_company,
@@ -110,6 +111,13 @@ async def search_contacts(state: ContactDiscoveryState) -> ContactDiscoveryState
 
     On CONTACT_SEARCH_FAILED (the people-search call itself failing):
     candidates left empty, error recorded, still routes forward.
+
+    Candidates with no confirmed evidence of actually working at the
+    target company (`is_confirmed_same_company`) are dropped here, before
+    ranking — a site-restricted people search only proves a hit's page
+    mentions the company *somewhere*, not that the person works there, and
+    such a candidate is not a useful referral contact no matter how well
+    their title matches the role.
     """
     company, title, location = state["company"], state["title"], state["location"]
     llm_client = _get_llm_client()
@@ -161,6 +169,7 @@ async def search_contacts(state: ContactDiscoveryState) -> ContactDiscoveryState
         )
 
     candidates = hits_to_candidates(list(hits), contact_types, default_company=company)
+    candidates = [c for c in candidates if is_confirmed_same_company(c, company)]
     return {**state, "candidates": candidates, "errors": errors}
 
 
@@ -168,9 +177,17 @@ async def rank_contacts(state: ContactDiscoveryState) -> ContactDiscoveryState:
     """External tools: LLM Provider Layer (relevance signals), scoring
     logic. Always routes to persist_and_publish (langgraph-state.md).
 
-    On LLM_PROVIDER_ERROR: falls back to rule-based same_company/
-    role_similarity signals only, leaving department_relevance/
-    seniority_fit None for that candidate, rather than aborting the run.
+    Scores every candidate in a single batched LLM call
+    (`score_candidates_with_llm`) rather than one call per candidate, to
+    keep this node's LLM cost O(1) per job instead of O(candidates).
+
+    On LLM_PROVIDER_ERROR (the whole batch call failing): falls back to
+    rule-based same_company/role_similarity signals only for every
+    candidate, leaving department_relevance/seniority_fit None, rather
+    than aborting the run. A candidate the model's response simply omitted
+    an entry for (schema-valid but incomplete batch) gets the same
+    rule-based fallback individually, with no separate error recorded —
+    mirrors classify_hits' existing per-index defensive fallback.
     """
     candidates = state["candidates"]
     if not candidates:
@@ -181,32 +198,41 @@ async def rank_contacts(state: ContactDiscoveryState) -> ContactDiscoveryState:
     errors: list[WorkflowError] = list(state["errors"])
     details = get_contact_details()
 
+    try:
+        signals_list = score_candidates_with_llm(llm_client, company, title, candidates)
+    except LLMProviderError as exc:
+        signals_list = [None] * len(candidates)
+        errors.append(
+            WorkflowError(
+                node="rank_contacts",
+                error_code=ErrorCode.LLM_PROVIDER_ERROR,
+                message=(
+                    f"relevance scoring failed for {len(candidates)} candidate(s) at "
+                    f"{company!r}: {exc}; falling back to rule-based signals for this run"
+                ),
+                occurred_at=_now(),
+            )
+        )
+
     ranked: list[RankedContact] = []
-    llm_error_recorded = False
-    for candidate in candidates:
-        same_company_flag = _same_company(candidate.company, company)
-        try:
-            signals = score_candidate_with_llm(llm_client, company, title, candidate)
+    for candidate, signals in zip(candidates, signals_list, strict=True):
+        # A candidate's company is only ever treated as a same-company
+        # signal when it was actually parsed from the search hit — never
+        # when it was defaulted to the job's own company for display only
+        # (hits_to_candidates' company_confirmed=False path), otherwise
+        # every candidate whose profile merely mentions the company gets
+        # fabricated same-company credit.
+        same_company_flag = (
+            _same_company(candidate.company, company) if candidate.company_confirmed else False
+        )
+        if signals is not None:
             role_similarity = signals.role_similarity
             department_relevance: float | None = signals.department_relevance
             seniority_fit: float | None = signals.seniority_fit
-        except LLMProviderError as exc:
+        else:
             role_similarity = rule_based_role_similarity(candidate, title)
             department_relevance = None
             seniority_fit = None
-            if not llm_error_recorded:
-                errors.append(
-                    WorkflowError(
-                        node="rank_contacts",
-                        error_code=ErrorCode.LLM_PROVIDER_ERROR,
-                        message=(
-                            f"relevance scoring failed for {candidate.full_name}: {exc}; "
-                            "falling back to rule-based signals for this run"
-                        ),
-                        occurred_at=_now(),
-                    )
-                )
-                llm_error_recorded = True
 
         relevance_score = compute_relevance_score(
             same_company_flag=same_company_flag,
@@ -235,7 +261,15 @@ async def rank_contacts(state: ContactDiscoveryState) -> ContactDiscoveryState:
             seniority_fit=seniority_fit,
         )
 
-    ranked.sort(key=lambda r: r.relevance_score, reverse=True)
+    # Confirmed same-company contacts always outrank unconfirmed ones,
+    # regardless of relevance_score — a candidate with strong role
+    # similarity but zero evidence of working at the target company (the
+    # site-restricted search only proves their profile mentions the
+    # company *somewhere*, not that they work there — see
+    # hits_to_candidates' docstring) is not a useful referral contact no
+    # matter how well their title matches, and should never rank above one
+    # who is actually confirmed to be there.
+    ranked.sort(key=lambda r: (details[r.contact_id].same_company, r.relevance_score), reverse=True)
     return {**state, "ranked_contacts": ranked, "errors": errors}
 
 
