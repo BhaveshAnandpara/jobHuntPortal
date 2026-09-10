@@ -1,0 +1,58 @@
+# Build context exclusions for the backend image (see Dockerfile).
+# Keeps the context small and, critically, keeps local secrets and runtime
+# data out of anything the image could ever copy.
+
+# Local secrets / environment config — never enters an image.
+.env
+.env.*
+!.env.example
+
+# VCS and tooling metadata
+.git
+.gitignore
+.github
+.vscode
+.idea
+.claude
+.agents
+
+# Frontend (deployed separately to Vercel, not part of the backend image)
+frontend
+node_modules
+**/node_modules
+
+# Python caches and build artifacts
+__pycache__
+**/__pycache__
+*.py[cod]
+*.egg-info
+**/*.egg-info
+.eggs
+build
+dist
+.venv
+venv
+env
+
+# Test / lint caches and outputs
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+test-results
+playwright-report
+tests
+e2e
+
+# Runtime data produced locally
+logs
+*.log
+data
+*.db
+*.sqlite3
+
+# Docs and specs
+docs
+*.md
+!README.md

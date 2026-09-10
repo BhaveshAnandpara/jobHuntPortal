@@ -36,15 +36,17 @@ Deploy the AI-Powered Multi-Agent Career Opportunity Platform to a publicly acce
 
 ### Oracle Cloud VM Backend Stack
 
-The entire backend runs on a single "Always Free" VM via an extended `docker-compose` stack:
+The backend runs on **two** "Always Free" VMs (`VM.Standard.E2.1.Micro`, 1 GB RAM each), in the same VCN/subnet, one `docker compose` file per VM. The original single-VM plan was abandoned because Oracle had no capacity for the 24 GB ARM shape in this region; two micro instances is the Always Free ceiling for the AMD alternative.
 
-- **Postgres:** Existing service (unchanged from local dev)
-- **Kafka:** Existing service (unchanged from local dev)
-- **FastAPI API:** New service, runs `python scripts/run_server.py`, accessible on port 8000
-- **Kafka consumers:** New service, runs `python scripts/run_consumers.py`, subscribes to Kafka topics
-- **Caddy:** New reverse proxy service, terminates HTTPS with auto-renewed Let's Encrypt cert, routes traffic to the API
+- **Data VM** (`docker-compose.data.yml`) — private network only:
+  - **Postgres:** Adapted from local dev (production password, standard port 5432 published to the VM host)
+  - **Kafka:** Adapted from local dev (advertises the VM's **private IP** so the other VM's clients can reach it; heap capped at 384 MB)
+- **App VM** (`docker-compose.app.yml`) — internet-facing, the domain points here:
+  - **FastAPI API:** Runs `python scripts/run_server.py` on port 8000, connects to the Data VM over the private subnet
+  - **Kafka consumers:** Runs `python scripts/run_consumers.py`, subscribes to Kafka on the Data VM
+  - **Caddy:** Reverse proxy, terminates HTTPS with auto-renewed Let's Encrypt cert, routes traffic to the API container beside it
 
-**Acceptance:** All services start without errors; Caddy binds to port 443 (HTTPS), API responds on port 8000.
+**Acceptance:** All services start without errors on both VMs; Caddy binds to port 443 (HTTPS) on the App VM, API responds on port 8000, and `GET /health` returns 200 with both `database` and `kafka` true — which is what proves the cross-VM connections actually work.
 
 ### LLM Provider Switch
 
@@ -54,7 +56,7 @@ The entire backend runs on a single "Always Free" VM via an extended `docker-com
 
 ### Secrets & Configuration
 
-- All production secrets (Groq API key, JWT secret, database password) live only in `.env.production` on the VM
+- All production secrets (Groq API key, JWT secret, database password) live only in `.env.production` on the VMs — one file per VM, holding only what that VM needs (the Data VM never sees the Groq or JWT secrets)
 - Never committed to the repo
 - Frontend only receives the public API base URL; no secrets ever leave the VM
 - **Acceptance:** No secrets appear in Vercel build logs, GitHub, or frontend network requests
@@ -70,7 +72,7 @@ The entire backend runs on a single "Always Free" VM via an extended `docker-com
 ### Deployment Success
 
 1. ✓ Vercel frontend deploys and loads at a public HTTPS URL
-2. ✓ Oracle Cloud VM is provisioned and running Docker
+2. ✓ Both Oracle Cloud VMs are provisioned, running Docker, and able to reach each other on the private subnet
 3. ✓ Caddy reverse proxy terminates HTTPS and routes to the API
 4. ✓ FastAPI API responds to requests from the frontend
 5. ✓ Kafka consumers are subscribed and processing events
@@ -109,8 +111,18 @@ The entire backend runs on a single "Always Free" VM via an extended `docker-com
 ### Free-Tier VM Availability
 
 - **Risk:** Oracle Cloud "Always Free" ARM capacity occasionally unavailable in signup's default region
-- **Mitigation:** Fallback to AMD always-free shape or a different region
-- **Acceptance:** VM is provisioned and pingable from the internet
+- **Outcome:** This risk materialised. `VM.Standard.A1.Flex` (ARM, up to 24 GB RAM) returned persistent out-of-capacity errors, so the deployment took the documented fallback: two `VM.Standard.E2.1.Micro` AMD instances (1 GB RAM each), which is the Always Free ceiling for that shape
+- **Mitigation:** Split the stack across the two VMs — stateful services (Postgres, Kafka) on a Data VM, stateless ones (API, consumers, Caddy) on an App VM
+- **Acceptance:** Both VMs are provisioned; the App VM is reachable from the internet and the Data VM only from the private subnet
+
+### 1 GB RAM per VM
+
+- **Risk:** Each VM has 1 GB of RAM total (2 GB combined, and no way to add a third free instance). Kafka's JVM alone defaults to a 1 GB heap, which would OOM-kill the broker or Postgres on the Data VM; on the App VM, the API, the consumer workers and a Chromium instance for Playwright page fetching share the same 1 GB
+- **Mitigation:**
+  1. Kafka's heap is pinned to `-Xmx384m -Xms384m` via `KAFKA_HEAP_OPTS` in `docker-compose.data.yml`, instead of the image's 1 GB default
+  2. Separating the stateful and stateless halves means neither VM ever runs all five services
+  3. **Operator action:** add a 2–4 GB swapfile on **both** VMs as headroom (`fallocate` + `mkswap` + `swapon`, persisted in `/etc/fstab` — see TECH.md Task 1). Swap is slow, but for a low-traffic beta it turns an out-of-memory kill into a brief slowdown
+- **Acceptance:** Both VMs stay up under a full smoke-test run; `free -h` on each shows headroom remaining, and no container has been OOM-killed (`docker inspect <container> --format '{{.State.OOMKilled}}'` is `false`)
 
 ### SSL/HTTPS Certificate
 
@@ -126,7 +138,7 @@ The entire backend runs on a single "Always Free" VM via an extended `docker-com
 
 ## Rollout & Validation Plan
 
-1. **Deploy to VM:** Extend `docker-compose.yml`, add `.env.production`, start the stack
+1. **Deploy to the VMs:** Start the Data VM's stack (`docker-compose.data.yml`) first, confirm it is reachable on the private subnet, then start the App VM's stack (`docker-compose.app.yml`); each VM has its own `.env.production`
 2. **Smoke test:** Run Playwright e2e suite against the live URL once; all tests pass
 3. **Manual walkthrough:** Operator signs in, creates a profile, triggers an agent to reason; verifies all features work
 4. **Database reset:** Run `python scripts/reset_db.py`; verify all tables are fresh

@@ -4,7 +4,8 @@ docs/architecture/api-contracts.md.
 
 Each router is defined and owned by its component (users/api/,
 profiles/api/, jobs/ingestion/api.py, jobs/discovery/api.py,
-matching/api/, contacts/api/, outreach/api/, tracking/api/) — this module
+matching/api/, contacts/api/, outreach/api/, tracking/api/, plus the
+infrastructure-owned probe in infrastructure/health/api.py) — this module
 only wires them together. No route or business logic is defined here.
 
 Also owns the one process-wide `configure_logging()` call (via the
@@ -48,6 +49,7 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
 from contacts.api import router as contacts_router
+from infrastructure.health import router as health_router
 from infrastructure.logging import configure_logging, format_context, get_logger
 from jobs.discovery.api import router as job_discovery_router
 from jobs.ingestion.api import router as job_ingestion_router
@@ -76,6 +78,7 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
+app.include_router(health_router)
 app.include_router(users_router)
 app.include_router(auth_router)
 app.include_router(profiles_router)

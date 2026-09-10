@@ -1,0 +1,62 @@
+# Caddy reverse proxy for the JobHunt beta deployment.
+# Task 4 of docs/deployment/TECH.md.
+#
+# Caddy runs as its own container on the compose network created by
+# docker-compose.app.yml. It owns ports 80 and 443 on
+# the VM, terminates HTTPS, and forwards plain HTTP to the FastAPI container
+# over the internal network.
+#
+# Nothing environment-specific is committed here. Caddy natively expands
+# {$VAR} placeholders from its own process environment when it loads this
+# file, and docker-compose.app.yml passes these two through to the caddy
+# service from .env.production (created on the VM in Task 6, never committed):
+#
+#   API_DOMAIN   Public hostname for the API, e.g. api.<your-domain>, acquired
+#                in Task 5. Used both as the site address and as the name Caddy
+#                requests a certificate for.
+#   CADDY_EMAIL  Contact address for the Let's Encrypt / ACME account. Used for
+#                expiry warnings and certificate problem notices.
+#
+# Neither has a default on purpose. If either is missing, Caddy fails loudly
+# with a parse error at startup, visible in `docker compose logs caddy`, rather
+# than quietly serving the wrong hostname or registering an ACME account with
+# no contact address.
+{
+	# ACME account contact address.
+	#
+	# TECH.md names the per-site `tls <email>` form. The global `email` option
+	# used here is the equivalent, and is Caddy's documented home for the ACME
+	# account contact: it is set once for the whole config rather than per site,
+	# so adding a second site block later cannot accidentally leave that site
+	# with a separate, contactless ACME account.
+	email {$CADDY_EMAIL}
+}
+
+# Public API endpoint.
+#
+# Naming a real hostname here is what turns on automatic HTTPS: on first
+# startup, once the Task 5 DNS A record points at this VM and inbound 80/443
+# are open, Caddy completes an ACME challenge with Let's Encrypt, installs the
+# certificate, and then renews it in the background with no operator action.
+{$API_DOMAIN} {
+	# Access logs go to stderr, which Docker captures, so the operator reads
+	# them with `docker compose logs caddy`. Deliberately not written to a file
+	# inside the container: that would hide them from docker logs and grow
+	# unbounded on the free-tier VM's disk.
+	log {
+		output stderr
+		format console
+	}
+
+	# Compress JSON API responses on the way out.
+	encode zstd gzip
+
+	# `api` is the compose service name of the FastAPI container, resolved by
+	# Docker's embedded DNS on the shared compose network. It must not be
+	# localhost: inside this container, localhost is Caddy itself. This hop is
+	# plain HTTP and never leaves the compose network; TLS is terminated above.
+	#
+	# reverse_proxy sets X-Forwarded-For / -Proto / -Host automatically, so the
+	# API sees the original client IP and scheme.
+	reverse_proxy api:8000
+}

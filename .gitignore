@@ -10,6 +10,11 @@ venv/
 env/
 
 .env
+# Production secrets for the beta deployment (docs/deployment/TECH.md Task 6),
+# referenced by docker-compose.data.yml and docker-compose.app.yml — each VM
+# gets its own. The `.env` line above matches only a file named exactly `.env`,
+# so this needs its own entry.
+.env.production
 *.db
 *.sqlite3
 

@@ -25,7 +25,6 @@ dependencies = [
     "groq",
     "pypdf",
     "python-docx",
-    "streamlit",
     "python-dotenv",
     "pyjwt",
     "bcrypt",
