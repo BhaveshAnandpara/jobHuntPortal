@@ -17,9 +17,24 @@
  * `rows` array — pair it with `EmptyState` in the consuming feature for the
  * "no rows yet" case, the same convention every other list-shaped page in
  * this app follows.
+ *
+ * T2 (docs/frontend/frontend-revamp-spec.md): the desktop half now renders
+ * through shadcn's `ui/table` parts. shadcn's table has no responsive
+ * collapse of its own, so the `md:hidden` card list below is kept exactly as
+ * it was — it is this app's documented responsive behavior, not something
+ * the migration replaces.
  */
 
 import type { KeyboardEvent, ReactNode } from 'react'
+import {
+  Table as ShadcnTable,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from './ui/table'
+import { cn } from '@/lib/utils'
 
 export type TableColumn<T> = {
   /** Unique key for this column — also used as the React key per cell. */
@@ -61,45 +76,54 @@ export function Table<T>({ columns, rows, getRowKey, onRowClick, ...rest }: Tabl
     <>
       {/* Desktop / tablet: a real table, hidden below the md breakpoint. */}
       <div className="hidden overflow-x-auto rounded-lg border border-gray-200 md:block">
-        <table className="w-full border-collapse text-sm" aria-label={rest['aria-label']}>
-          <thead>
-            <tr className="border-b border-gray-200 bg-gray-50">
+        <ShadcnTable className="border-collapse text-sm" aria-label={rest['aria-label']}>
+          <TableHeader>
+            <TableRow className="border-b border-gray-200 bg-gray-50 hover:bg-gray-50">
               {columns.map((column) => (
-                <th
+                <TableHead
                   key={column.key}
                   scope="col"
-                  className={`px-4 py-2.5 text-left text-xs font-medium text-gray-500 ${column.headerClassName ?? ''}`}
+                  className={cn(
+                    'h-auto px-4 py-2.5 text-left text-xs font-medium whitespace-normal text-gray-500',
+                    column.headerClassName,
+                  )}
                 >
                   {column.header}
-                </th>
+                </TableHead>
               ))}
-            </tr>
-          </thead>
-          <tbody>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {rows.map((row) => {
               const key = getRowKey(row)
               const activate = () => onRowClick?.(row)
               return (
-                <tr
+                <TableRow
                   key={key}
-                  className={`border-b border-gray-100 last:border-0 ${
-                    clickable ? 'cursor-pointer hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand' : ''
-                  }`}
+                  className={cn(
+                    'border-b border-gray-100 last:border-0',
+                    clickable
+                      ? 'cursor-pointer hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset focus-visible:outline-none'
+                      : 'hover:bg-transparent',
+                  )}
                   onClick={clickable ? activate : undefined}
                   tabIndex={clickable ? 0 : undefined}
                   role={clickable ? 'button' : undefined}
                   onKeyDown={clickable ? (event) => handleActivationKeyDown(event, activate) : undefined}
                 >
                   {columns.map((column) => (
-                    <td key={column.key} className={`px-4 py-3 text-gray-900 ${column.cellClassName ?? ''}`}>
+                    <TableCell
+                      key={column.key}
+                      className={cn('px-4 py-3 whitespace-normal text-gray-900', column.cellClassName)}
+                    >
                       {column.render(row)}
-                    </td>
+                    </TableCell>
                   ))}
-                </tr>
+                </TableRow>
               )
             })}
-          </tbody>
-        </table>
+          </TableBody>
+        </ShadcnTable>
       </div>
 
       {/* Mobile: card-collapse — same data, stacked layout, below md. */}
@@ -110,9 +134,11 @@ export function Table<T>({ columns, rows, getRowKey, onRowClick, ...rest }: Tabl
           return (
             <li key={key}>
               <div
-                className={`flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-4 ${
-                  clickable ? 'cursor-pointer hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand' : ''
-                }`}
+                className={cn(
+                  'flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-4',
+                  clickable &&
+                    'cursor-pointer hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none',
+                )}
                 onClick={clickable ? activate : undefined}
                 tabIndex={clickable ? 0 : undefined}
                 role={clickable ? 'button' : undefined}

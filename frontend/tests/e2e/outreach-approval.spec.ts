@@ -45,13 +45,14 @@ test('reject path: generated -> reject -> rejected, never sent, removed from the
   // Rejecting moves the record out of PENDING_APPROVAL/EDITED, so
   // `OutreachQueuePage`'s own selection logic (`rows.find(item => item.id
   // === selectedId)`) no longer finds it once the resulting `outreachList`
-  // invalidation refetches — the review panel unmounts immediately, back
-  // to the "Needs review" empty state. This (not a lingering "Rejected."
-  // message in place — there is nowhere for one to linger, by this page's
-  // own design) is the real, correct, in-place signal that the rejection
-  // was accepted. The terminal REJECTED status itself is confirmed via the
-  // History tab below.
-  await expect(page.getByText('Nothing waiting for your review')).toBeVisible({ timeout: 10_000 })
+  // invalidation refetches, and the "Needs review" list empties out to its
+  // empty state. (T9 note: the reading pane itself deliberately stays
+  // mounted showing the record's last known state rather than vanishing
+  // mid-decision — see `OutreachQueuePage`'s comment on why the pane sits
+  // outside the list's loading/empty/error switch. The emptied *list* is
+  // the signal asserted here.) The terminal REJECTED status itself is
+  // confirmed via the History tab below.
+  await expect(page.getByText("You're all caught up")).toBeVisible({ timeout: 10_000 })
   await expect(page.getByText(/^Sent\.?$/)).toHaveCount(0)
 
   // Wait a few drain-loop cycles to prove nothing sends a rejected draft.
@@ -95,24 +96,31 @@ test('approve path: generated -> approve -> approved -> sent (background dispatc
   await page.getByRole('button', { name: 'Approve' }).click()
 
   // Approving also moves the record out of PENDING_APPROVAL/EDITED, so —
-  // same reasoning as the reject path above — the review panel unmounts
-  // immediately rather than lingering to show "Approved — will be sent
-  // shortly." in place. (full-user-journey.spec.ts's deep-link-page test
-  // already proves that exact intermediate-state text renders correctly,
-  // and proves the precise Generated-never-Sent-synchronously ordering, on
-  // a page whose query isn't status-filtered the way this queue is.) The
-  // meaningful guarantee left to verify from this page: the background
-  // dispatcher — never the approval request/response itself — is what
-  // eventually moves it to Sent.
-  await expect(page.getByText('Nothing waiting for your review')).toBeVisible({ timeout: 10_000 })
+  // same reasoning as the reject path above — the "Needs review" list
+  // empties out to its empty state. (full-user-journey.spec.ts's
+  // deep-link-page test already proves the "Approved — will be sent
+  // shortly." intermediate-state text renders correctly, and proves the
+  // precise Generated-never-Sent-synchronously ordering, on a page whose
+  // query isn't status-filtered the way this queue is.) The meaningful
+  // guarantee left to verify from this page: the background dispatcher —
+  // never the approval request/response itself — is what eventually moves
+  // it to Sent.
+  await expect(page.getByText("You're all caught up")).toBeVisible({ timeout: 10_000 })
 
-  await page.getByRole('tab', { name: 'History' }).click()
   // History has no live polling (fetch-once + refetchOnWindowFocus) — see
   // `waitForCondition`'s docstring in helpers.ts for the same
-  // reload-based-wait rationale applied here.
+  // reload-based-wait rationale applied here. The History tab selection is
+  // local component state (`OutreachQueuePage`'s `useState<QueueTab>`), so
+  // every reload `waitForCondition` performs drops back to "Needs review" —
+  // re-select the tab inside the check rather than once before it, or the
+  // SENT row simply isn't on screen to be found on any attempt after the
+  // first.
   await waitForCondition(
     page,
-    (timeoutMs) => expect(page.getByText('Sent').first()).toBeVisible({ timeout: timeoutMs }),
+    async (timeoutMs) => {
+      await page.getByRole('tab', { name: 'History' }).click()
+      await expect(page.getByText('Sent').first()).toBeVisible({ timeout: timeoutMs })
+    },
     15_000,
   )
 })

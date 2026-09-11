@@ -198,7 +198,8 @@ from workflows.langgraph.contact_discovery.discovery import (
     ContactClassificationBatch,
     ContactSearchPlan,
     HitClassification,
-    RelevanceSignals,
+    RankedRelevanceSignals,
+    RelevanceSignalsBatch,
 )
 from workflows.langgraph.job_matching.scoring import ProfileScoringOutput
 from workflows.langgraph.outreach_generation.generation import OutreachDraftContent
@@ -615,14 +616,35 @@ CONTACTS_LLM = ContactsFakeLLMClient(
         "Classify each of the following": ContactClassificationBatch(
             classifications=[HitClassification(index=0, contact_type=ContactType.HIRING_MANAGER)]
         ),
-        CONTACT_MECH_NAME: RelevanceSignals(
-            role_similarity=0.9, department_relevance=0.9, seniority_fit=0.8
+        # `rank_contacts` scores every candidate in ONE batched LLM call
+        # (`score_candidates_with_llm`), so the scripted result has to be a
+        # `RelevanceSignalsBatch`, not a bare `RelevanceSignals` — reading
+        # `batch.signals` off the latter raises `AttributeError`, which
+        # `contacts.consumers` re-raises as `ContactDiscoveryError` and which
+        # then fails the drain loop on every subsequent tick.
+        # `CONTACTS_PEOPLE_SEARCH` scripts exactly one `PersonSearchHit` per
+        # company, so a single-entry batch at index 0 is the faithful
+        # equivalent of the per-candidate scripting this replaces.
+        CONTACT_MECH_NAME: RelevanceSignalsBatch(
+            signals=[
+                RankedRelevanceSignals(
+                    index=0, role_similarity=0.9, department_relevance=0.9, seniority_fit=0.8
+                )
+            ]
         ),
-        CONTACT_SWE_NAME: RelevanceSignals(
-            role_similarity=0.92, department_relevance=0.88, seniority_fit=0.8
+        CONTACT_SWE_NAME: RelevanceSignalsBatch(
+            signals=[
+                RankedRelevanceSignals(
+                    index=0, role_similarity=0.92, department_relevance=0.88, seniority_fit=0.8
+                )
+            ]
         ),
-        CONTACT_HR_NAME: RelevanceSignals(
-            role_similarity=0.9, department_relevance=0.85, seniority_fit=0.75
+        CONTACT_HR_NAME: RelevanceSignalsBatch(
+            signals=[
+                RankedRelevanceSignals(
+                    index=0, role_similarity=0.9, department_relevance=0.85, seniority_fit=0.75
+                )
+            ]
         ),
     }
 )

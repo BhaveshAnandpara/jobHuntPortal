@@ -23,16 +23,24 @@
  * rendered as free text/lists exactly as `ResumeProfile` returns them, with
  * no section framed around any one profession.
  *
+ * T6 (docs/frontend/frontend-revamp-spec.md): this file keeps all of the
+ * upload/replace/delete state and the polling-driven effects below
+ * unchanged; the per-row presentation (progressive `UPLOADED -> PARSING ->
+ * PARSED | PARSE_FAILED` treatment and the derived-profile summary) now
+ * lives in `ResumeCard.tsx`. No API call, request shape or polling interval
+ * was touched.
+ *
  * Owner: frontend-profile-agent.
  */
 
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { toast } from 'sonner'
-import { Button, Card, Dialog, EmptyState, ErrorState, PageHeader, Skeleton, StatusBadge } from '../../components'
+import { FileText, Upload } from 'lucide-react'
+import { Button, Dialog, EmptyState, ErrorState, PageHeader, Skeleton } from '../../components'
 import { useDeleteResume, useResumes, useUploadResume } from '../../api/resumes'
 import { useProfiles } from '../../api/profiles'
 import { toApiError } from '../../api/client'
-import { formatDate } from '../../utils/format'
+import { ResumeCard } from './ResumeCard'
 import type { ResumeProfile, ResumeResponse } from '../../api/types'
 
 function buildProfilesByResumeId(profiles: ResumeProfile[] | undefined): Map<string, ResumeProfile> {
@@ -227,6 +235,7 @@ export function ResumesPage() {
             isLoading={isUploading}
             onClick={() => uploadInputRef.current?.click()}
           >
+            {isUploading ? null : <Upload className="h-4 w-4" aria-hidden />}
             Upload resume
           </Button>
         }
@@ -249,90 +258,43 @@ export function ResumesPage() {
       />
 
       {resumesQuery.isLoading ? (
-        <div className="flex flex-col gap-3">
-          <Skeleton className="h-24 w-full" />
-          <Skeleton className="h-24 w-full" />
+        <div className="flex flex-col gap-4">
+          <Skeleton className="h-32 w-full rounded-lg" />
+          <Skeleton className="h-32 w-full rounded-lg" />
         </div>
       ) : loadError ? (
         <ErrorState message={loadError.message} onRetry={() => void resumesQuery.refetch()} />
       ) : resumes.length === 0 ? (
         <EmptyState
+          icon={<FileText className="h-8 w-8" aria-hidden />}
           title="No resumes yet"
-          description="Upload a resume to build your first profile."
+          description="Upload a resume to build your first profile. It is analyzed automatically, and the profile it produces is what opportunities are matched against."
           action={
             <Button variant="primary" onClick={() => uploadInputRef.current?.click()}>
+              <Upload className="h-4 w-4" aria-hidden />
               Upload resume
             </Button>
           }
         />
       ) : (
-        <ul className="flex flex-col gap-3">
-          {resumes.map((resume) => {
-            const profile = profilesByResumeId.get(resume.id)
-            return (
-              <li key={resume.id}>
-                <Card>
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">{resume.file_name}</p>
-                      <p className="text-xs text-gray-500">Uploaded {formatDate(resume.uploaded_at)}</p>
-                    </div>
-                    <StatusBadge status={resume.status} />
-                  </div>
-
-                  {profile ? (
-                    <div className="mt-4 border-t border-gray-100 pt-4">
-                      <p className="text-sm font-medium text-gray-900">{profile.title}</p>
-                      {profile.seniority ? (
-                        <p className="text-xs text-gray-500">{profile.seniority}</p>
-                      ) : null}
-                      {profile.summary ? (
-                        <p className="mt-2 text-sm text-gray-600">{profile.summary}</p>
-                      ) : null}
-                      {profile.skills.length > 0 ? (
-                        <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Skills">
-                          {profile.skills.map((skill) => (
-                            <li
-                              key={skill}
-                              className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700"
-                            >
-                              {skill}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </div>
-                  ) : resume.status === 'PARSE_FAILED' ? (
-                    <p className="mt-4 border-t border-gray-100 pt-4 text-sm text-gray-500">
-                      This resume could not be analyzed. Upload a corrected file to try again.
-                    </p>
-                  ) : null}
-
-                  <div className="mt-4 flex gap-2">
-                    <Button
-                      variant="secondary"
-                      disabled={isReplacing}
-                      onClick={() => {
-                        setReplaceTarget(resume)
-                        replaceInputRef.current?.click()
-                      }}
-                    >
-                      Replace
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      onClick={(event) => {
-                        deleteTriggerRef.current = event.currentTarget
-                        setDeleteTarget(resume)
-                      }}
-                    >
-                      Delete
-                    </Button>
-                  </div>
-                </Card>
-              </li>
-            )
-          })}
+        <ul className="flex flex-col gap-4">
+          {resumes.map((resume) => (
+            <li key={resume.id}>
+              <ResumeCard
+                resume={resume}
+                profile={profilesByResumeId.get(resume.id)}
+                isReplaceDisabled={isReplacing}
+                onReplace={() => {
+                  setReplaceTarget(resume)
+                  replaceInputRef.current?.click()
+                }}
+                onDelete={(trigger) => {
+                  deleteTriggerRef.current = trigger
+                  setDeleteTarget(resume)
+                }}
+              />
+            </li>
+          ))}
         </ul>
       )}
 
@@ -345,11 +307,11 @@ export function ResumesPage() {
         triggerRef={deleteTriggerRef}
         description={
           deleteTarget
-            ? `Delete "${deleteTarget.file_name}"? This also removes its derived profile.`
+            ? `Delete "${deleteTarget.file_name}"? This also removes the profile derived from it, so it can no longer be matched against opportunities. This cannot be undone.`
             : undefined
         }
       >
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
             Cancel
           </Button>

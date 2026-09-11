@@ -12,6 +12,14 @@
  * profession-independent rendering check using a non-engineering profile
  * fixture.
  *
+ * T6 (docs/frontend/frontend-revamp-spec.md) adds the redesign's own
+ * behavioral coverage at the bottom of this file: the indeterminate
+ * progress affordance appearing for non-terminal statuses and disappearing
+ * at a terminal one, the profile summary being gated on the *resume's*
+ * `PARSED` status rather than on a profile row merely existing, a
+ * `PARSE_FAILED` row staying visible and actionable without blocking its
+ * neighbours, and the summary rendering only real `ResumeProfile` fields.
+ *
  * Owner: frontend-profile-agent.
  */
 
@@ -609,5 +617,184 @@ describe('ResumesPage', () => {
     expect(screen.queryByText(/coding skills/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/programming languages/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/tech stack/i)).not.toBeInTheDocument()
+  })
+
+  // --- T6 (docs/frontend/frontend-revamp-spec.md) ---
+
+  it('T6: shows an indeterminate progress bar while a resume is non-terminal and removes it once it resolves, with no reload', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    let getCalls = 0
+    const statusesByCall = ['UPLOADED', 'UPLOADED', 'PARSING', 'PARSED']
+    server.use(
+      http.get(`${API_BASE_URL}/resumes`, () => {
+        if (getCalls === 0) {
+          getCalls += 1
+          return HttpResponse.json([])
+        }
+        const status = statusesByCall[Math.min(getCalls, statusesByCall.length - 1)]
+        getCalls += 1
+        return HttpResponse.json([
+          { id: 'resume-new', user_id: 'user-1', file_name: 'new.pdf', status, uploaded_at: '2026-01-03T00:00:00Z' },
+        ])
+      }),
+      http.get(`${API_BASE_URL}/profiles`, () => HttpResponse.json([])),
+      http.post(`${API_BASE_URL}/resumes`, () =>
+        HttpResponse.json(
+          { id: 'resume-new', user_id: 'user-1', file_name: 'new.pdf', status: 'UPLOADED', uploaded_at: '2026-01-03T00:00:00Z' },
+          { status: 202 },
+        ),
+      ),
+    )
+
+    renderResumesPage()
+    await waitFor(() => expect(screen.getByText('No resumes yet')).toBeInTheDocument())
+
+    fireEvent.change(screen.getByLabelText('Upload resume files'), { target: { files: [makeFile('new.pdf')] } })
+
+    // Indeterminate: a progressbar with no aria-valuenow — the backend
+    // reports no percentage, so the UI must not imply one.
+    const progressBar = await screen.findByRole('progressbar', { name: 'Analyzing new.pdf' })
+    expect(progressBar).not.toHaveAttribute('aria-valuenow')
+
+    await act(() => vi.advanceTimersByTimeAsync(2100)) // -> PARSING
+    await waitFor(() => expect(screen.getByText('Parsing…')).toBeInTheDocument())
+    expect(screen.getByRole('progressbar', { name: 'Analyzing new.pdf' })).toBeInTheDocument()
+
+    await act(() => vi.advanceTimersByTimeAsync(2100)) // -> PARSED
+    await waitFor(() => expect(screen.getByText('Parsed')).toBeInTheDocument())
+    // Terminal state: the indeterminate affordance is gone.
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+
+    vi.useRealTimers()
+  })
+
+  it('T6: does not render a profile summary for a resume that has not reached PARSED, even if /profiles already returns one for it', async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/resumes`, () =>
+        HttpResponse.json([
+          { id: 'resume-1', user_id: 'user-1', file_name: 'pending.pdf', status: 'PARSING', uploaded_at: '2026-01-01T00:00:00Z' },
+        ]),
+      ),
+      // A stale/early profile row for a resume that is still parsing. The
+      // page must gate on the *resume's* status, not on profile presence.
+      http.get(`${API_BASE_URL}/profiles`, () =>
+        HttpResponse.json([
+          {
+            profile_id: 'profile-1',
+            resume_id: 'resume-1',
+            user_id: 'user-1',
+            title: 'Operations Manager',
+            summary: 'Should not be shown while parsing',
+            skills: ['Scheduling'],
+            experience_years: 6,
+            seniority: 'Senior',
+            education: [],
+          },
+        ]),
+      ),
+    )
+
+    renderResumesPage()
+
+    expect(await screen.findByText('pending.pdf')).toBeInTheDocument()
+    expect(screen.getByText('Parsing…')).toBeInTheDocument()
+    expect(screen.getByRole('progressbar', { name: 'Analyzing pending.pdf' })).toBeInTheDocument()
+    expect(screen.queryByText('Operations Manager')).not.toBeInTheDocument()
+    expect(screen.queryByText('Should not be shown while parsing')).not.toBeInTheDocument()
+    expect(screen.queryByText('Scheduling')).not.toBeInTheDocument()
+  })
+
+  it('T6: a PARSE_FAILED row stays visible and actionable without blocking the other rows', async () => {
+    let deletedResumeId: string | null = null
+    server.use(
+      http.get(`${API_BASE_URL}/resumes`, () =>
+        HttpResponse.json(
+          [
+            { id: 'resume-ok', user_id: 'user-1', file_name: 'good.pdf', status: 'PARSED', uploaded_at: '2026-01-01T00:00:00Z' },
+            { id: 'resume-bad', user_id: 'user-1', file_name: 'broken.pdf', status: 'PARSE_FAILED', uploaded_at: '2026-01-02T00:00:00Z' },
+          ].filter((resume) => resume.id !== deletedResumeId),
+        ),
+      ),
+      http.get(`${API_BASE_URL}/profiles`, () =>
+        HttpResponse.json([
+          {
+            profile_id: 'profile-1',
+            resume_id: 'resume-ok',
+            user_id: 'user-1',
+            title: 'Registered Nurse',
+            summary: 'Clinical care across acute settings',
+            skills: ['Triage'],
+            experience_years: 4,
+            seniority: 'Mid',
+            education: [],
+          },
+        ]),
+      ),
+      http.delete(`${API_BASE_URL}/resumes/:resumeId`, ({ params }) => {
+        deletedResumeId = params.resumeId as string
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+
+    renderResumesPage()
+
+    expect(await screen.findByText('broken.pdf')).toBeInTheDocument()
+    const failedRow = screen.getByText('broken.pdf').closest('li') as HTMLElement
+    const okRow = screen.getByText('good.pdf').closest('li') as HTMLElement
+
+    // The failed row is visibly distinct (its own failure panel) and has no
+    // profile summary, while the healthy row renders its profile normally.
+    expect(within(failedRow).getByText(/could not be analyzed/i)).toBeInTheDocument()
+    expect(within(failedRow).queryByRole('progressbar')).not.toBeInTheDocument()
+    expect(within(okRow).getByText('Registered Nurse')).toBeInTheDocument()
+    expect(within(okRow).queryByText(/could not be analyzed/i)).not.toBeInTheDocument()
+
+    // The failed row is still fully actionable — it does not block the list.
+    await userEvent.click(within(failedRow).getByRole('button', { name: 'Delete' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Delete resume' })
+    expect(within(dialog).getByText(/broken\.pdf/)).toBeInTheDocument()
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+
+    await waitFor(() => expect(deletedResumeId).toBe('resume-bad'))
+    await waitFor(() => expect(screen.queryByText('broken.pdf')).not.toBeInTheDocument())
+    expect(screen.getByText('good.pdf')).toBeInTheDocument()
+    expect(screen.getByText('Registered Nurse')).toBeInTheDocument()
+  })
+
+  it('T6: renders the profile summary from real API fields only (experience years and education), with no invented metrics', async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/resumes`, () =>
+        HttpResponse.json([
+          { id: 'resume-1', user_id: 'user-1', file_name: 'chef.pdf', status: 'PARSED', uploaded_at: '2026-01-01T00:00:00Z' },
+        ]),
+      ),
+      http.get(`${API_BASE_URL}/profiles`, () =>
+        HttpResponse.json([
+          {
+            profile_id: 'profile-1',
+            resume_id: 'resume-1',
+            user_id: 'user-1',
+            title: 'Executive Chef',
+            summary: 'Menu development and kitchen leadership',
+            skills: ['Menu Design'],
+            experience_years: 12,
+            seniority: 'Lead',
+            education: [
+              { institution: 'Culinary Institute', degree: 'Diploma', field_of_study: 'Culinary Arts', graduation_year: 2012 },
+            ],
+          },
+        ]),
+      ),
+    )
+
+    renderResumesPage()
+
+    expect(await screen.findByText('Executive Chef')).toBeInTheDocument()
+    expect(screen.getByText('Lead · 12 years experience')).toBeInTheDocument()
+    expect(screen.getByText('Diploma, Culinary Arts — Culinary Institute (2012)')).toBeInTheDocument()
+    // Nothing on the row claims a score/percentage/rank the API never returned.
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/match score/i)).not.toBeInTheDocument()
   })
 })

@@ -8,8 +8,17 @@
  *        src/api/types.ts's aliases).
  * Output: a colored, labeled badge. No feature re-implements this styling.
  * Consumers: every feature that renders a lifecycle status.
+ *
+ * T2 (docs/frontend/frontend-revamp-spec.md): internals are now shadcn's
+ * `ui/badge`, with the five status *categories* expressed as a `cva` variant
+ * set layered over it. The enum -> category mapping itself is untouched and
+ * still lives in src/utils/status.ts — this file only decides what a category
+ * looks like.
  */
 
+import { cva } from 'class-variance-authority'
+import { Badge } from './ui/badge'
+import { cn } from '@/lib/utils'
 import { getStatusPresentation, type StatusCategory } from '../utils/status'
 import type {
   ApplicationStatus,
@@ -28,20 +37,27 @@ type KnownStatus =
   | JobProcessingStatus
   | MatchRecommendation
 
-const CATEGORY_CLASSES: Record<StatusCategory, string> = {
-  progress: 'bg-status-progress-bg text-status-progress',
-  attention: 'bg-status-attention-bg text-status-attention',
-  positive: 'bg-status-positive-bg text-status-positive',
-  negative: 'bg-status-negative-bg text-status-negative',
-  neutral: 'bg-status-neutral-bg text-status-neutral',
-}
+/**
+ * Category -> color pairing. Each pair is one of the WCAG-AA-verified
+ * foreground/background token pairs declared in src/index.css's `@theme`
+ * block; do not inline a raw color here.
+ */
+const statusBadgeVariants = cva('rounded-full border-transparent px-2.5 py-0.5 text-xs font-medium', {
+  variants: {
+    category: {
+      progress: 'bg-status-progress-bg text-status-progress',
+      attention: 'bg-status-attention-bg text-status-attention',
+      positive: 'bg-status-positive-bg text-status-positive',
+      negative: 'bg-status-negative-bg text-status-negative',
+      neutral: 'bg-status-neutral-bg text-status-neutral',
+    } satisfies Record<StatusCategory, string>,
+  },
+})
 
 export function StatusBadge({ status }: { status: KnownStatus }) {
   const { label, category } = getStatusPresentation(status)
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${CATEGORY_CLASSES[category]}`}
-    >
+    <Badge variant="secondary" className={cn('h-auto gap-1.5', statusBadgeVariants({ category }))}>
       {category === 'progress' ? (
         // Design direction: "In progress" gets a subtle pulse, never a
         // spinner (see docs/frontend/design-system.md#status-badges and the
@@ -51,6 +67,6 @@ export function StatusBadge({ status }: { status: KnownStatus }) {
         <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-current" aria-hidden />
       ) : null}
       {label}
-    </span>
+    </Badge>
   )
 }

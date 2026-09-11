@@ -76,6 +76,43 @@ describe('ContactsPanel — black-box contract', () => {
   })
 })
 
+describe('ContactsPanel — search not started yet', () => {
+  it('shows a placeholder, not a skeleton and not an empty state, when searchStarted is false', async () => {
+    // A 200 [] would be indistinguishable from "searched and found nobody",
+    // and a skeleton would claim a request is in flight — T8 requires this
+    // third state to look like neither.
+    server.use(contactsHandler([]))
+    const { container } = renderPanel({ jobId: 'job-1', searchStarted: false })
+
+    expect(screen.getByText("Contact search hasn't started")).toBeInTheDocument()
+    expect(container.querySelectorAll('.animate-pulse')).toHaveLength(0)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('No relevant contacts found for this company yet'),
+    ).not.toBeInTheDocument()
+    // Nothing to act on while the pipeline hasn't got here yet.
+    expect(screen.queryByRole('button', { name: /search again/i })).not.toBeInTheDocument()
+  })
+
+  it('renders contacts normally when searchStarted is true', async () => {
+    server.use(contactsHandler([contact()]))
+    renderPanel({ jobId: 'job-1', searchStarted: true })
+
+    await waitFor(() => expect(screen.getByText('Jane Doe')).toBeInTheDocument())
+    expect(screen.queryByText("Contact search hasn't started")).not.toBeInTheDocument()
+  })
+
+  it('behaves exactly as before when searchStarted is omitted (the jobId-only contract)', async () => {
+    server.use(contactsHandler([]))
+    renderPanel({ jobId: 'job-1' })
+
+    await waitFor(() =>
+      expect(screen.getByText('No relevant contacts found for this company yet')).toBeInTheDocument(),
+    )
+    expect(screen.queryByText("Contact search hasn't started")).not.toBeInTheDocument()
+  })
+})
+
 describe('ContactsPanel — loading state', () => {
   it('shows a loading skeleton before the contacts query resolves', () => {
     server.use(contactsHandler([contact()]))

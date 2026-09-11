@@ -49,7 +49,12 @@ test('manual post-outreach lifecycle: REJECTED branch after APPLIED/INTERVIEW', 
   await advanceApplicationStatus(page, 'Interview', 'Interview')
   await advanceApplicationStatus(page, 'Rejected', 'Rejected')
 
-  await expect(page.getByText('No further manual status changes are available.')).toBeVisible()
+  // T8 restyle: the terminal state now names the status it is terminal *in*
+  // rather than showing a generic "nothing available" line, so this asserts
+  // both halves — that it is terminal, and that it says Rejected.
+  await expect(
+    page.getByText('This opportunity is marked Rejected. There are no further status changes to make.'),
+  ).toBeVisible()
 
   // Timeline reflects the manual entries in order, each attributed to a
   // manual trigger.

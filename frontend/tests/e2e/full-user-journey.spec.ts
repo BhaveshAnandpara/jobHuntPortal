@@ -189,5 +189,7 @@ test('full user journey: onboarding through outreach sent and manual lifecycle',
   await advanceApplicationStatus(page, 'Offer', 'Offer')
 
   // Terminal state: the Status Action Menu now offers nothing further.
-  await expect(page.getByText('No further manual status changes are available.')).toBeVisible()
+  await expect(
+    page.getByText('This opportunity is marked Offer. There are no further status changes to make.'),
+  ).toBeVisible()
 })

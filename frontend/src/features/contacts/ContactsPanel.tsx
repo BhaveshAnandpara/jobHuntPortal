@@ -12,15 +12,27 @@
  *        "Search again" action — Contact Discovery Service cannot look these
  *        up itself, see api-mapping.md#contact-discovery-service.
  * Output: self-contained rendering of GET /jobs/{job_id}/contacts (loading /
- *         search-in-progress / empty / populated / error), plus the manual
- *         re-trigger action (POST /jobs/{job_id}/contacts/search).
+ *         search-in-progress / not-yet-searched / empty / populated / error),
+ *         plus the manual re-trigger action
+ *         (POST /jobs/{job_id}/contacts/search).
  * Consumers: frontend-opportunities-agent's OpportunityDetailPage
  *            (imported, never modified by that agent).
+ *
+ * T8 (docs/frontend/frontend-revamp-spec.md) adds one optional prop,
+ * `searchStarted`, and nothing else to the contract. It exists because the
+ * spec requires "contact search hasn't started" to look different from both
+ * "loading" and "found nothing": a skeleton claims a request is in flight,
+ * and an empty state claims the search ran and came back empty — neither is
+ * true for an opportunity that hasn't reached `CONTACT_SEARCH`. Only the
+ * embedding page knows which of those it is (this panel still refuses to
+ * take an `Application`/`ApplicationStatus`), so it passes a plain boolean.
+ * Leaving the prop off keeps the previous behavior exactly, so the
+ * jobId-only black-box contract is unchanged.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ExternalLink, Search } from 'lucide-react'
+import { ExternalLink, Search, UserSearch } from 'lucide-react'
 import { Button, Card, EmptyState, ErrorState, Skeleton, Spinner, StatusBadge } from '../../components'
 import { pollAlways } from '../../hooks/usePolling'
 import { listContacts, useContacts, useTriggerContactSearch } from '../../api/contacts'
@@ -52,14 +64,50 @@ const CONTACT_TYPE_LABELS: Record<ContactType, string> = {
   OTHER: 'Other',
 }
 
+/**
+ * The panel's own chrome, kept local to this feature folder rather than
+ * importing frontend-opportunities-agent's `DetailPanel` — this panel is a
+ * dependency of that page, not the other way round, and importing upward
+ * would make the two folders circular. The treatment is matched deliberately
+ * so the embedded panel doesn't read as a foreign object on the detail page.
+ */
+function Shell({ action, children }: { action?: ReactNode; children: ReactNode }) {
+  return (
+    <Card className="p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-gray-900">Contacts</p>
+          <p className="mt-0.5 text-xs text-gray-500">
+            People at this company worth reaching out to, ranked by relevance.
+          </p>
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
+      </div>
+      <div className="mt-4">{children}</div>
+    </Card>
+  )
+}
+
 export type ContactsPanelProps = {
   jobId: string
   company?: string
   title?: string
   location?: string
+  /**
+   * `false` only when the embedder *knows* contact discovery hasn't started
+   * for this job yet. `undefined` means "don't know" and behaves exactly as
+   * before (fetch and render whatever comes back).
+   */
+  searchStarted?: boolean
 }
 
-export function ContactsPanel({ jobId, company, title, location }: ContactsPanelProps) {
+export function ContactsPanel({ jobId, company, title, location, searchStarted }: ContactsPanelProps) {
+  // Neither a loading state nor an empty one: the search hasn't run, so a
+  // 200 `[]` from this job would mean "nothing found *yet*", which is not
+  // what an empty state says. The query itself is left exactly as it was —
+  // `useContacts`'s behavior is frontend-api-agent's, unchanged by T8 — and
+  // only the rendering branches on this.
+  const hasNotStarted = searchStarted === false
   const contactsQuery = useContacts(jobId)
   const triggerSearch = useTriggerContactSearch()
   const [isSearching, setIsSearching] = useState(false)
@@ -119,59 +167,70 @@ export function ContactsPanel({ jobId, company, title, location }: ContactsPanel
     </Button>
   ) : null
 
+  // Checked before the query's own states: the search hasn't started, so
+  // neither a skeleton (nothing is being searched) nor an empty state
+  // (nothing was searched) would be true.
+  if (hasNotStarted) {
+    return (
+      <Shell>
+        <div className="flex items-start gap-3 rounded-md border border-dashed border-gray-300 bg-gray-50 px-4 py-4">
+          <UserSearch className="mt-0.5 h-5 w-5 shrink-0 text-gray-400" aria-hidden />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-gray-600">Contact search hasn&apos;t started</p>
+            <p className="mt-0.5 text-xs text-gray-500">
+              Once this opportunity is shortlisted, relevant people at this company are found and
+              ranked here automatically.
+            </p>
+          </div>
+        </div>
+      </Shell>
+    )
+  }
+
   if (contactsQuery.isPending) {
     return (
-      <Card>
-        <p className="text-sm font-semibold text-gray-900">Contacts</p>
-        <div className="mt-4 space-y-3">
-          <Skeleton className="h-16 w-full" />
-          <Skeleton className="h-16 w-full" />
-          <Skeleton className="h-16 w-full" />
+      <Shell>
+        <div role="status" aria-label="Loading contacts" className="space-y-3">
+          <Skeleton className="h-16 w-full rounded-md" />
+          <Skeleton className="h-16 w-full rounded-md" />
+          <Skeleton className="h-16 w-full rounded-md" />
         </div>
-      </Card>
+      </Shell>
     )
   }
 
   if (contactsQuery.isError) {
     return (
-      <Card>
-        <p className="text-sm font-semibold text-gray-900">Contacts</p>
-        <div className="mt-4">
-          <ErrorState message={contactsQuery.error.message} onRetry={() => void contactsQuery.refetch()} />
-        </div>
-      </Card>
+      <Shell>
+        <ErrorState message={contactsQuery.error.message} onRetry={() => void contactsQuery.refetch()} />
+      </Shell>
     )
   }
 
   return (
-    <Card>
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-semibold text-gray-900">Contacts</p>
-        {sortedContacts.length > 0 ? searchAgainButton : null}
-      </div>
-
+    <Shell action={sortedContacts.length > 0 ? searchAgainButton : null}>
       {isSearching ? (
-        <div className="mt-3 flex items-center gap-2 text-sm text-gray-500">
+        <div className="mb-3 flex items-center gap-2 rounded-md bg-status-progress-bg px-3 py-2 text-sm text-status-progress">
           <Spinner className="h-4 w-4" label="Searching for contacts" />
           Searching for contacts…
         </div>
       ) : null}
 
       {triggerSearch.isError ? (
-        <div className="mt-3">
+        <div className="mb-3">
           <ErrorState message={triggerSearch.error.message} onRetry={handleSearchAgain} />
         </div>
       ) : null}
 
       {sortedContacts.length === 0 ? (
-        <div className="mt-4">
-          <EmptyState
-            title="No relevant contacts found for this company yet"
-            action={searchAgainButton ?? undefined}
-          />
-        </div>
+        <EmptyState
+          icon={<UserSearch className="h-8 w-8" aria-hidden />}
+          title="No relevant contacts found for this company yet"
+          description="The search ran but turned up nobody ranked highly enough to contact. You can run it again."
+          action={searchAgainButton ?? undefined}
+        />
       ) : (
-        <ul className="mt-4 space-y-3">
+        <ul className="space-y-3">
           {sortedContacts.map((contact) => (
             <li key={contact.id}>
               <ContactRow contact={contact} />
@@ -179,7 +238,7 @@ export function ContactsPanel({ jobId, company, title, location }: ContactsPanel
           ))}
         </ul>
       )}
-    </Card>
+    </Shell>
   )
 }
 

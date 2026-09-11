@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "anti-ui-slop": {
+      "source": "davepoon/buildwithclaude",
+      "sourceType": "github",
+      "skillPath": "plugins/all-skills/skills/anti-ui-slop/SKILL.md",
+      "computedHash": "5ea98c7d33416e9ee68112d72bbf4dbd585b7eb8626bdf4c244d668b668b5d34"
+    },
     "brainstorming": {
       "source": "obra/superpowers",
       "sourceType": "github",

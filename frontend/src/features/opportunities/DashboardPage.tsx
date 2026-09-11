@@ -7,28 +7,66 @@
  * page reads `useOutreachList('PENDING_APPROVAL')` directly per its
  * own agent-ownership.md entry ("reading outreach data for a summary
  * display is fine; you're only forbidden from implementing outreach
- * *actions*"), which is enough for a simple attention count/link without
- * needing the richer cross-feature component integration-ui-agent may add
- * later.
+ * *actions*"), which is enough for the count/deep-link list in
+ * `NeedsAttentionList` without needing the richer cross-feature component
+ * integration-ui-agent may add later.
  *
  * Polling: `GET /applications` and `GET /outreach?status=PENDING_APPROVAL`
  * both poll at 10s, always-on — the slowest interval of any page, per
  * docs/frontend/async-workflows.md's table (Dashboard is a summary view,
  * not the primary place a user watches active progress).
+ *
+ * T5 (docs/frontend/frontend-revamp-spec.md) restyle. No request or response
+ * handling changed; only presentation and which states are reachable:
+ * - The page is now three explicit slots — primary action, what needs a
+ *   decision, then what's in flight — instead of four same-weight cards.
+ * - **Brand-new account:** when `GET /profiles` resolves to zero active
+ *   profiles (see `jobSubmissionReadiness.ts` for why that, and not
+ *   `GET /resumes`, is the real gate), the primary-action slot becomes an
+ *   onboarding `EmptyState` pointing at `/resumes`. With no opportunities
+ *   either, the pipeline/recent sections are omitted entirely rather than
+ *   rendering three zeros at someone who has nothing to see yet — the
+ *   explicit requirement in T5.
+ * - Per-query states are now separated: the pipeline summary skeletons/errors
+ *   on `GET /applications`, the review list on `GET /outreach`, so a failure
+ *   in one never blanks the other (error-handling.md's secondary-panel row).
+ * - Needs-attention rows deep link to `/outreach/:outreachId` instead of
+ *   dumping the user at the top of the queue.
+ * - Submitting still navigates to `/opportunities`, never to a detail page:
+ *   the Application row is created asynchronously off `jobs.discovered`, so
+ *   there is no detail route to land on yet (user-flows.md#job-submission-flow).
+ * - Removed a stray `console.log` of the recent-opportunities array, left
+ *   over from earlier development (noted as known cleanup in the spec's
+ *   Section 1).
  */
 
+import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { Briefcase, Send } from 'lucide-react'
-import { Card, EmptyState, ErrorState, PageHeader, Skeleton, StatusBadge } from '../../components'
+import { FileText } from 'lucide-react'
+import { Card, EmptyState, PageHeader } from '../../components'
 import { useApplications } from '../../api/tracking'
 import { useOutreachList } from '../../api/outreach'
 import { pollAlways } from '../../hooks/usePolling'
 import { toApiError } from '../../api/client'
-import { formatDate } from '../../utils/format'
 import { JobUrlSubmitForm } from './JobUrlSubmitForm'
+import { NeedsAttentionList } from './NeedsAttentionList'
+import { PipelineSummary } from './PipelineSummary'
+import { RecentOpportunities } from './RecentOpportunities'
+import { useJobSubmissionReadiness } from './jobSubmissionReadiness'
 import { matchesStatusTab } from './pipeline'
 
 const RECENT_COUNT = 5
+
+/**
+ * The onboarding CTA has to be a real `<a>` (it navigates), and the shared
+ * `Button` primitive always renders a `<button>` — adding an `asChild`/`href`
+ * escape hatch to it would be a change to `src/components`, outside this
+ * ticket's file scope. So the primary-button treatment is mirrored here from
+ * the same `@theme` tokens `Button` uses (`bg-brand`/`hover:bg-brand-hover`),
+ * never a one-off color.
+ */
+const PRIMARY_LINK_CLASSES =
+  'inline-flex items-center gap-2 rounded-md bg-brand px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-hover focus-visible:ring-2 focus-visible:ring-ring'
 
 export function DashboardPage() {
   const applications = useApplications(undefined, {
@@ -37,116 +75,91 @@ export function DashboardPage() {
   const pendingOutreach = useOutreachList('PENDING_APPROVAL', {
     refetchInterval: pollAlways(10000),
   })
+  const { isBlockedOnMissingResume } = useJobSubmissionReadiness()
 
-  const applicationList = applications.data ?? []
+  const applicationList = useMemo(() => applications.data ?? [], [applications.data])
   const hasAnyOpportunities = applicationList.length > 0
 
-  const recent = [...applicationList]
-    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-    .slice(0, RECENT_COUNT)
+  const recent = useMemo(
+    () =>
+      [...applicationList]
+        .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+        .slice(0, RECENT_COUNT),
+    [applicationList],
+  )
 
-  console.log(JSON.parse(JSON.stringify(recent)))
+  // `OutreachResponse` has a `job_id` but no company/title; `ApplicationResponse`
+  // has both, keyed by the same `job_id`. One map, built from data already on
+  // screen, is what lets a review row name its job instead of showing a bare
+  // message excerpt.
+  const applicationsByJobId = useMemo(() => {
+    const map = new Map<string, (typeof applicationList)[number]>()
+    for (const application of applicationList) {
+      map.set(application.job_id, application)
+    }
+    return map
+  }, [applicationList])
 
-  const activeCount = applicationList.filter((a) => matchesStatusTab(a.status, 'active')).length
-  const appliedCount = applicationList.filter((a) => matchesStatusTab(a.status, 'applied')).length
-  const closedCount = applicationList.filter((a) => matchesStatusTab(a.status, 'closed')).length
+  const counts = {
+    active: applicationList.filter((a) => matchesStatusTab(a.status, 'active')).length,
+    applied: applicationList.filter((a) => matchesStatusTab(a.status, 'applied')).length,
+    closed: applicationList.filter((a) => matchesStatusTab(a.status, 'closed')).length,
+  }
 
-  const pendingOutreachCount = pendingOutreach.data?.length ?? 0
+  // Nothing to show at all: no resume to match against *and* no history.
+  // Showing a pipeline of three zeros here would be technically accurate and
+  // completely useless — T5 asks for the resume CTA instead.
+  const showOnlyOnboarding = isBlockedOnMissingResume && !hasAnyOpportunities
 
   return (
     <div>
-      <PageHeader title="Dashboard" description="Paste a job URL to get started." />
+      <PageHeader
+        title="Dashboard"
+        description="Submit a job posting, review anything waiting on your approval, and see where every opportunity stands."
+      />
 
-      <Card className="mb-6">
-        <JobUrlSubmitForm />
-      </Card>
-
-      {pendingOutreachCount > 0 ? (
-        <Card className="mb-6">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium text-gray-900">Needs your attention</p>
-              <p className="mt-1 text-sm text-gray-500">
-                {pendingOutreachCount} outreach draft{pendingOutreachCount === 1 ? '' : 's'} waiting for your review.
-              </p>
-            </div>
-            <Link
-              to="/outreach"
-              className="inline-flex shrink-0 items-center gap-1.5 text-sm font-medium text-brand hover:underline"
-            >
-              <Send className="h-4 w-4" aria-hidden />
-              Review outreach
-            </Link>
-          </div>
-        </Card>
-      ) : null}
-
-      <section aria-labelledby="pipeline-summary-heading" className="mb-6">
-        <h2 id="pipeline-summary-heading" className="mb-3 text-sm font-semibold text-gray-900">
-          Pipeline summary
-        </h2>
-        {applications.isLoading ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Skeleton className="h-20" />
-            <Skeleton className="h-20" />
-            <Skeleton className="h-20" />
-          </div>
-        ) : applications.isError ? (
-          <ErrorState message={toApiError(applications.error).message} onRetry={() => applications.refetch()} />
-        ) : !hasAnyOpportunities ? (
+      {isBlockedOnMissingResume ? (
+        <div className="mb-8">
           <EmptyState
-            icon={<Briefcase className="h-8 w-8" />}
-            title="No opportunities yet"
-            description="Paste a job URL above to get started."
+            icon={<FileText className="h-8 w-8" aria-hidden />}
+            title="Add a resume to get started"
+            description="Upload a resume before adding opportunities — matching needs at least one analyzed resume to compare jobs against. Every posting you submit is scored against it."
+            action={
+              <Link to="/resumes" className={PRIMARY_LINK_CLASSES}>
+                Upload a resume
+              </Link>
+            }
           />
-        ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Card>
-              <p className="text-2xl font-semibold text-gray-900">{activeCount}</p>
-              <p className="text-sm text-gray-500">Active</p>
-            </Card>
-            <Card>
-              <p className="text-2xl font-semibold text-gray-900">{appliedCount}</p>
-              <p className="text-sm text-gray-500">Applied</p>
-            </Card>
-            <Card>
-              <p className="text-2xl font-semibold text-gray-900">{closedCount}</p>
-              <p className="text-sm text-gray-500">Closed</p>
-            </Card>
-          </div>
-        )}
-      </section>
+        </div>
+      ) : (
+        <Card className="mb-8 transition-shadow hover:shadow-md">
+          <JobUrlSubmitForm />
+        </Card>
+      )}
 
-      {hasAnyOpportunities ? (
-        <section aria-labelledby="recent-opportunities-heading">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 id="recent-opportunities-heading" className="text-sm font-semibold text-gray-900">
-              Recent opportunities
-            </h2>
-            <Link to="/opportunities" className="text-sm font-medium text-brand hover:underline">
-              View all
-            </Link>
-          </div>
-          <ul className="flex flex-col gap-2">
-            {recent.map((application) => (
-              <li key={application.id}>
-                <Link
-                  to={`/opportunities/${application.id}`}
-                  className="flex items-center justify-between gap-4 rounded-lg border border-gray-200 bg-white px-4 py-3 hover:bg-gray-50"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-gray-900">{application.title}</p>
-                    <p className="truncate text-sm text-gray-500">
-                      {application.company} · {formatDate(application.updated_at)}
-                    </p>
-                  </div>
-                  <StatusBadge status={application.status} />
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+      {showOnlyOnboarding ? null : (
+        <>
+          <NeedsAttentionList
+            items={pendingOutreach.data ?? []}
+            applicationsByJobId={applicationsByJobId}
+            isLoading={pendingOutreach.isLoading}
+            errorMessage={
+              pendingOutreach.isError ? toApiError(pendingOutreach.error).message : undefined
+            }
+            onRetry={() => void pendingOutreach.refetch()}
+          />
+
+          <PipelineSummary
+            counts={counts}
+            isLoading={applications.isLoading}
+            errorMessage={applications.isError ? toApiError(applications.error).message : undefined}
+            onRetry={() => void applications.refetch()}
+            hasAnyOpportunities={hasAnyOpportunities}
+          />
+
+          {hasAnyOpportunities ? <RecentOpportunities applications={recent} /> : null}
+        </>
+      )}
     </div>
   )
 }

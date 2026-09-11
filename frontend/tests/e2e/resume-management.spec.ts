@@ -88,8 +88,13 @@ test('resume parsing failure shows a terminal Parse failed badge, not a crash', 
     (timeoutMs) => expect(page.getByText('Parse failed')).toBeVisible({ timeout: timeoutMs }),
     20_000,
   )
+  // T6 restyle: the per-row PARSE_FAILED message now also states that the
+  // failure is isolated to this row, which is the property the surrounding
+  // test cares about.
   await expect(
-    page.getByText('This resume could not be analyzed. Upload a corrected file to try again.'),
+    page.getByText(
+      /This resume could not be analyzed, so it has no profile\. Your other resumes are unaffected/,
+    ),
   ).toBeVisible()
 })
 

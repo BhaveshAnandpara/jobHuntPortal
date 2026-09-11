@@ -15,10 +15,22 @@
  * Software Engineer" for every variant), making entries indistinguishable;
  * the file name is what's actually unique per upload.
  *
+ * T8 (docs/frontend/frontend-revamp-spec.md) restyle. Same one query, same
+ * rendering-as-received rule:
+ * - before matching has run, this says so rather than showing an empty list
+ *   or a skeleton (the comparison is a by-product of matching, so it has the
+ *   same gate as `MatchPanel` — see lifecycleStage.ts);
+ * - each row now carries the score as a bar plus the number, so the ranking
+ *   is readable at a glance without reading four percentages;
+ * - the winning row is marked once, by the same "Selected" pill as before —
+ *   the backend's choice, not a client-side re-pick.
+ *
  * Owner: frontend-opportunities-agent.
  */
 
-import { Card, ErrorState, Skeleton } from '../../components'
+import { Layers } from 'lucide-react'
+import { ErrorState } from '../../components'
+import { DetailPanel, PanelLoading, StageNotReached } from './DetailPanel'
 import type { ProfileMatchScore, ResumeResponse } from '../../api/types'
 import { formatScorePercent } from '../../utils/format'
 
@@ -26,6 +38,8 @@ type OtherResumesEvaluatedProps = {
   profileScores: ProfileMatchScore[] | undefined
   resumes: ResumeResponse[] | undefined
   selectedResumeId: string | null | undefined
+  /** False only when the matching stage provably hasn't run yet — see lifecycleStage.ts. */
+  isAvailable: boolean
   isLoading: boolean
   isError: boolean
   errorMessage?: string
@@ -40,45 +54,71 @@ export function OtherResumesEvaluated({
   profileScores,
   resumes,
   selectedResumeId,
+  isAvailable,
   isLoading,
   isError,
   errorMessage,
   onRetry,
 }: OtherResumesEvaluatedProps) {
   return (
-    <Card>
-      <h2 className="mb-3 text-sm font-semibold text-gray-900">Other resumes evaluated</h2>
-      {isLoading ? (
-        <div className="flex flex-col gap-2">
-          <Skeleton className="h-8 w-full" />
-          <Skeleton className="h-8 w-full" />
-        </div>
+    <DetailPanel
+      title="Other resumes evaluated"
+      description="Every resume this posting was scored against, best first."
+    >
+      {!isAvailable ? (
+        <StageNotReached
+          icon={<Layers className="h-5 w-5" aria-hidden />}
+          title="No comparison yet"
+          description="Matching scores each of your resumes against the posting. The full comparison appears here once it runs."
+        />
+      ) : isLoading ? (
+        <PanelLoading label="Loading resume comparison" lines={2} />
       ) : isError ? (
         <ErrorState message={errorMessage ?? 'Could not load resume comparison.'} onRetry={onRetry} />
       ) : !profileScores || profileScores.length === 0 ? (
-        <p className="text-sm text-gray-500">No resume comparison available yet.</p>
+        <p className="text-sm text-gray-400">
+          Matching recorded no per-resume scores for this posting.
+        </p>
       ) : (
         <ul className="flex flex-col gap-2">
           {[...profileScores]
             .sort((a, b) => b.score - a.score)
-            .map((profileScore) => (
-              <li
-                key={profileScore.profile_id}
-                className="flex items-center justify-between gap-3 rounded-md border border-gray-100 px-3 py-2 text-sm"
-              >
-                <span className="text-gray-700">
-                  {resumeLabel(profileScore, resumes)}
-                  {selectedResumeId && profileScore.resume_id === selectedResumeId ? (
-                    <span className="ml-2 rounded-full bg-status-positive-bg px-2 py-0.5 text-xs text-status-positive">
-                      Selected
+            .map((profileScore) => {
+              const isSelected = Boolean(selectedResumeId) && profileScore.resume_id === selectedResumeId
+              const percent = Math.max(0, Math.min(100, profileScore.score * 100))
+              return (
+                <li
+                  key={profileScore.profile_id}
+                  className={`rounded-md border px-3 py-2.5 ${
+                    isSelected ? 'border-status-positive/40 bg-status-positive-bg' : 'border-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate text-sm text-gray-700">
+                        {resumeLabel(profileScore, resumes)}
+                      </span>
+                      {isSelected ? (
+                        <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-xs font-medium text-status-positive">
+                          Selected
+                        </span>
+                      ) : null}
                     </span>
-                  ) : null}
-                </span>
-                <span className="font-medium text-gray-900">{formatScorePercent(profileScore.score)}</span>
-              </li>
-            ))}
+                    <span className="shrink-0 text-sm font-medium tabular-nums text-gray-900">
+                      {formatScorePercent(profileScore.score)}
+                    </span>
+                  </div>
+                  <div className="mt-2 h-1 overflow-hidden rounded-full bg-gray-200" aria-hidden>
+                    <div
+                      className={`h-full rounded-full ${isSelected ? 'bg-status-positive' : 'bg-gray-400'}`}
+                      style={{ width: `${percent}%` }}
+                    />
+                  </div>
+                </li>
+              )
+            })}
         </ul>
       )}
-    </Card>
+    </DetailPanel>
   )
 }

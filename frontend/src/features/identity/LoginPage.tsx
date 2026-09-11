@@ -1,10 +1,28 @@
 /**
  * Route: /login — see `RegisterPage.tsx` for the account-creation
  * counterpart. Same pattern: `react-hook-form` + `zodResolver`, server
- * error surfaced via `FieldError`, `setToken` on success.
+ * error surfaced inline, `setToken` on success.
  *
  * If a token already exists, redirect to `/` immediately (same reasoning
  * as `RegisterPage.tsx`).
+ *
+ * T4 (docs/frontend/frontend-revamp-spec.md): restyled onto the shadcn-backed
+ * primitives (`components/Button`, `components/Input`) inside the shared
+ * `AuthShell`. The three states this screen must cover explicitly:
+ *
+ *   loading  — `login.isPending`: submit button is disabled, shows a spinner
+ *              and `aria-busy`, and the stale server error is cleared so the
+ *              user isn't reading a failure from the previous attempt.
+ *   error    — client-side Zod failures render per field via `AuthField`;
+ *              a `401 UNAUTHORIZED` from `POST /auth/login` renders as an
+ *              inline form-level banner (NOT a toast) and the form keeps
+ *              every value the user typed.
+ *   success  — token persisted, navigate to `/` (replace, so Back doesn't
+ *              land on a login form the user is already past).
+ *
+ * The request/response handling itself is unchanged: `useLogin()` still owns
+ * the call, `toApiError` still normalizes the failure, and the login 401 is
+ * still exempted from the global auto-logout redirect in `api/client.ts`.
  *
  * Owner: frontend-profile-agent.
  */
@@ -13,8 +31,9 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Link, Navigate, useNavigate } from 'react-router-dom'
-import { Button, Card, FieldError, Input, PageHeader } from '../../components'
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Button, Input } from '../../components'
+import { AuthField, AuthFormError, AuthShell } from './AuthShell'
 import { useLogin } from '../../api/auth'
 import { toApiError } from '../../api/client'
 import { useCurrentUserId } from '../../hooks/identity'
@@ -27,9 +46,33 @@ const loginSchema = z.object({
 
 type LoginFormValues = z.infer<typeof loginSchema>
 
+/**
+ * Where to land after a successful sign-in. `app/RequireIdentity` carries the
+ * protected route the user was bounced off in the navigation state as `from`
+ * (T3) — honoring it means an expired session drops the user back where they
+ * were instead of always on the dashboard.
+ *
+ * Only a same-origin, root-relative path is accepted: anything else (an
+ * absolute URL, a protocol-relative `//host` path, or a non-string that got
+ * into history state) falls back to `/` rather than becoming an open redirect.
+ */
+function resolveRedirectTarget(state: unknown): string {
+  const from = (state as { from?: unknown } | null)?.from
+  if (typeof from !== 'string' || !from.startsWith('/') || from.startsWith('//')) {
+    return '/'
+  }
+  // Never bounce back to an auth route — that would re-render this form.
+  if (from === '/login' || from === '/register') {
+    return '/'
+  }
+  return from
+}
+
 export function LoginPage() {
   const { token, setToken } = useCurrentUserId()
   const navigate = useNavigate()
+  const location = useLocation()
+  const redirectTo = resolveRedirectTarget(location.state)
   const login = useLogin()
   const [serverError, setServerError] = useState<string | null>(null)
 
@@ -42,8 +85,11 @@ export function LoginPage() {
     defaultValues: { email: '', password: '' },
   })
 
+  // Already authenticated (a returning visit to /login, or the re-render that
+  // follows `setToken` below). Same destination as a fresh sign-in, so the
+  // two paths can't disagree about where the user ends up.
   if (token) {
-    return <Navigate to="/" replace />
+    return <Navigate to={redirectTo} replace />
   }
 
   function onSubmit(values: LoginFormValues) {
@@ -53,9 +99,11 @@ export function LoginPage() {
       {
         onSuccess: (response) => {
           setToken(response.access_token)
-          navigate('/', { replace: true })
+          navigate(redirectTo, { replace: true })
         },
         onError: (error) => {
+          // No form reset here, deliberately: the user's email is almost
+          // always correct and only the password needs fixing.
           setServerError(toApiError(error).message)
         },
       },
@@ -63,52 +111,47 @@ export function LoginPage() {
   }
 
   return (
-    <div className="mx-auto max-w-md">
-      <PageHeader title="Log in" description="Welcome back." />
-      <Card>
-        <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex flex-col gap-4">
-          <div>
-            <label htmlFor="email" className="mb-1 block text-sm font-medium text-gray-700">
-              Email
-            </label>
-            <Input
-              id="email"
-              type="email"
-              autoComplete="email"
-              invalid={Boolean(errors.email)}
-              {...register('email')}
-            />
-            <FieldError message={errors.email?.message} />
-          </div>
+    <AuthShell
+      title="Log in"
+      description="Sign in to pick your job search back up."
+      footer={
+        <>
+          Need an account?{' '}
+          <Link to="/register" className="font-medium text-brand hover:underline">
+            Create one
+          </Link>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit(onSubmit)} noValidate className="mt-6 flex flex-col gap-5">
+        {serverError ? <AuthFormError title="Couldn't log you in" message={serverError} /> : null}
 
-          <div>
-            <label htmlFor="password" className="mb-1 block text-sm font-medium text-gray-700">
-              Password
-            </label>
-            <Input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              invalid={Boolean(errors.password)}
-              {...register('password')}
-            />
-            <FieldError message={errors.password?.message} />
-          </div>
+        <AuthField id="email" label="Email" error={errors.email?.message}>
+          <Input
+            id="email"
+            type="email"
+            autoComplete="email"
+            aria-describedby={errors.email ? 'email-error' : undefined}
+            invalid={Boolean(errors.email)}
+            {...register('email')}
+          />
+        </AuthField>
 
-          {serverError ? <FieldError message={serverError} /> : null}
+        <AuthField id="password" label="Password" error={errors.password?.message}>
+          <Input
+            id="password"
+            type="password"
+            autoComplete="current-password"
+            aria-describedby={errors.password ? 'password-error' : undefined}
+            invalid={Boolean(errors.password)}
+            {...register('password')}
+          />
+        </AuthField>
 
-          <Button type="submit" variant="primary" isLoading={login.isPending}>
-            Log in
-          </Button>
-
-          <p className="text-xs text-gray-500">
-            Need an account?{' '}
-            <Link to="/register" className="font-medium text-brand hover:underline">
-              Create one
-            </Link>
-          </p>
-        </form>
-      </Card>
-    </div>
+        <Button type="submit" variant="primary" isLoading={login.isPending} className="w-full">
+          Log in
+        </Button>
+      </form>
+    </AuthShell>
   )
 }

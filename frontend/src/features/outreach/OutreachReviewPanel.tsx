@@ -22,6 +22,15 @@
  * `draft_message` is already on the record server-side). There is no
  * "combined" edit+approve-in-one-call path.
  *
+ * T9 (docs/frontend/frontend-revamp-spec.md) restyle: the panel is now a
+ * three-band card — identity header, body (meta + state + message), and an
+ * action bar that only exists while the record is actionable. Exactly one
+ * filled/primary control (Approve) lives in that bar; Edit and Reject sit
+ * beside it as visible secondary controls, never hidden behind an overflow
+ * menu, because a reviewer must be able to see all three options the gate
+ * offers without hunting. Status copy moved to `outreachCopy.ts` so the
+ * queue list and this panel word Approved-vs-Sent identically.
+ *
  * Owner: frontend-outreach-agent.
  * Input: `outreach` — the full record, fetched by the calling page. This
  *        component never fetches its own `OutreachResponse`; both callers
@@ -32,14 +41,15 @@
  *        Optional `applicationId` (passed straight through to
  *        `useApproveOutreach` for the more targeted cache invalidation
  *        described there, when the caller happens to have it).
+ *        Optional `onConflict` — see its prop doc.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
-import { Pencil } from 'lucide-react'
+import { AlertTriangle, Ban, CheckCircle2, Clock, Pencil, PencilLine } from 'lucide-react'
 import { Button, Card, Dialog, FieldError, Skeleton, StatusBadge, Textarea } from '../../components'
 import { useApproveOutreach, useEditOutreach, useRejectOutreach } from '../../api/outreach'
 import { useJob } from '../../api/jobs'
@@ -47,12 +57,25 @@ import { useContacts } from '../../api/contacts'
 import { toApiError } from '../../api/client'
 import { requiredString } from '../../utils/validation'
 import { formatDateTime } from '../../utils/format'
+import { cn } from '@/lib/utils'
 import { getChannelLabel } from './channelLabel'
+import { getStatusHelperCopy } from './outreachCopy'
 import type { OutreachResponse } from '../../api/types'
 
 export type OutreachReviewPanelProps = {
   outreach: OutreachResponse
   applicationId?: string
+  /**
+   * Called once, after a `409 CONFLICT` from approve/edit/reject, for a
+   * caller whose view of this record comes from a *list* query
+   * (`OutreachQueuePage`) rather than `useOutreachItem`. The 409 refetch
+   * built into `api/outreach.ts` invalidates `queryKeys.outreachItem(...)`,
+   * which that caller isn't subscribed to, so without this hook the queue
+   * would keep showing the stale record until its next 5s poll. This is a
+   * refetch request, never a retry of the failed action — see
+   * error-handling.md's 409 row.
+   */
+  onConflict?: () => void
 }
 
 const editSchema = z.object({ message: requiredString })
@@ -61,37 +84,30 @@ type EditFormValues = z.infer<typeof editSchema>
 const ACTIONABLE_STATUSES = new Set<OutreachResponse['status']>(['PENDING_APPROVAL', 'EDITED'])
 
 /**
- * Every string here is derived purely from the server-fetched `status` —
- * never from local "I just clicked approve" state — so "Sent" can only
- * ever appear once `status` has actually been refetched as `SENT`. This is
- * the concrete mechanism behind "Generated != Sent": approving only ever
- * moves `status` to `APPROVED` (never `SENT`) as far as this component's
- * own API responses are concerned — `SENT` only appears via a later,
- * independent fetch of the real record (see async-workflows.md's note that
- * approval-to-send latency is a real, uncollapsed gap, not something to
- * paper over client-side).
+ * How each decided state *looks*, on top of the copy in `outreachCopy.ts`.
+ *
+ * `APPROVED` and `SENT` deliberately get different icons and different color
+ * tokens even though `utils/status.ts` maps both to the `positive` badge
+ * category (which is correct for the badge — both are good outcomes). At a
+ * glance, "approved, waiting on the sender" reads as an in-flight clock and
+ * "sent" reads as a completed check, so the two can never be mistaken for
+ * each other in the panel even if someone skims past the wording.
  */
-function statusHelperCopy(status: OutreachResponse['status']): string | null {
-  switch (status) {
-    case 'APPROVED':
-      return 'Approved — will be sent shortly.'
-    case 'SENT':
-      return 'Sent.'
-    case 'SEND_FAILED':
-      return 'Sending failed. This requires manual follow-up — no automatic retry.'
-    case 'REJECTED':
-      return 'Rejected.'
-    case 'EDITED':
-      return 'Edited — still needs your approval or rejection.'
-    default:
-      return null
-  }
+const STATUS_NOTE_APPEARANCE: Partial<
+  Record<OutreachResponse['status'], { Icon: typeof Clock; className: string }>
+> = {
+  APPROVED: { Icon: Clock, className: 'bg-status-progress-bg text-status-progress' },
+  SENT: { Icon: CheckCircle2, className: 'bg-status-positive-bg text-status-positive' },
+  SEND_FAILED: { Icon: AlertTriangle, className: 'bg-status-negative-bg text-status-negative' },
+  REJECTED: { Icon: Ban, className: 'bg-status-neutral-bg text-status-neutral' },
+  EDITED: { Icon: PencilLine, className: 'bg-status-attention-bg text-status-attention' },
 }
 
-export function OutreachReviewPanel({ outreach, applicationId }: OutreachReviewPanelProps) {
+export function OutreachReviewPanel({ outreach, applicationId, onConflict }: OutreachReviewPanelProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [conflictMessage, setConflictMessage] = useState<string | null>(null)
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false)
+  const rejectTriggerRef = useRef<HTMLButtonElement>(null)
 
   const jobQuery = useJob(outreach.job_id)
   const contactsQuery = useContacts(outreach.job_id)
@@ -102,6 +118,8 @@ export function OutreachReviewPanel({ outreach, applicationId }: OutreachReviewP
 
   const displayedMessage = outreach.final_message ?? outreach.draft_message
   const isActionable = ACTIONABLE_STATUSES.has(outreach.status)
+  const helperCopy = getStatusHelperCopy(outreach.status)
+  const noteAppearance = STATUS_NOTE_APPEARANCE[outreach.status]
 
   // A conflict banner explains *why the click that was just attempted
   // against this same record* failed — it must survive the 409-triggered
@@ -143,10 +161,11 @@ export function OutreachReviewPanel({ outreach, applicationId }: OutreachReviewP
     if (apiError.status === 409) {
       // Specific inline message, not a generic toast — see
       // error-handling.md's 409 row. The hooks already refetch
-      // `outreachItem` on 409; this component just needs to surface the
-      // message and let the next render (fresh `outreach` prop) show the
-      // real current state.
+      // `outreachItem` on 409; this component surfaces the message and
+      // lets a list-driven caller refresh its own copy of the record via
+      // `onConflict`. Neither path re-sends the failed action.
       setConflictMessage(apiError.message)
+      onConflict?.()
     } else {
       toast.error(apiError.message)
     }
@@ -185,86 +204,147 @@ export function OutreachReviewPanel({ outreach, applicationId }: OutreachReviewP
   const contact = contactsQuery.data?.find((candidate) => candidate.id === outreach.contact_id)
 
   return (
-    <Card className="flex flex-col gap-4">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-xs font-medium text-gray-500">Recipient</p>
+    <Card className="flex flex-col overflow-hidden p-0">
+      <header className="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50/60 px-5 py-4">
+        <div className="min-w-0">
+          <p className="text-xs font-medium tracking-wide text-gray-500 uppercase">Recipient</p>
           {contactsQuery.isLoading ? (
-            <Skeleton className="mt-1 h-5 w-40" />
+            <Skeleton className="mt-1.5 h-5 w-40" />
           ) : contact ? (
-            <p className="text-sm font-medium text-gray-900">
+            <p className="mt-1 truncate text-sm font-semibold text-gray-900">
               {contact.full_name}
               {contact.headline ? (
                 <span className="font-normal text-gray-500"> · {contact.headline}</span>
               ) : null}
             </p>
           ) : (
-            <p className="text-sm text-gray-500">Contact {outreach.contact_id}</p>
+            <p className="mt-1 text-sm text-gray-500">Contact {outreach.contact_id}</p>
           )}
         </div>
         <StatusBadge status={outreach.status} />
-      </div>
+      </header>
 
-      <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-500">
-        <span>Channel: {getChannelLabel(outreach.channel)}</span>
-        <span>
-          Target:{' '}
-          {jobQuery.isLoading
-            ? '…'
-            : jobQuery.data
-              ? `${jobQuery.data.title} · ${jobQuery.data.company}`
-              : `Job ${outreach.job_id}`}
-        </span>
-        <span>Generated {formatDateTime(outreach.generated_at)}</span>
-      </div>
+      <div className="flex flex-col gap-4 px-5 py-4">
+        {/*
+          Plain spans rather than a <dl> on purpose: each "Label: value" pair
+          has to stay a single text run so it reads as one phrase to screen
+          readers (and to text-based assertions) instead of being split into
+          two unrelated nodes.
+        */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
+          <span>Channel: {getChannelLabel(outreach.channel)}</span>
+          <span aria-hidden className="text-gray-300">
+            |
+          </span>
+          <span className="min-w-0 truncate">
+            Target:{' '}
+            {jobQuery.isLoading
+              ? '…'
+              : jobQuery.data
+                ? `${jobQuery.data.title} · ${jobQuery.data.company}`
+                : `Job ${outreach.job_id}`}
+          </span>
+          <span aria-hidden className="text-gray-300">
+            |
+          </span>
+          <span>Generated {formatDateTime(outreach.generated_at)}</span>
+        </div>
 
-      {statusHelperCopy(outreach.status) ? (
-        <p className="text-sm text-gray-600">{statusHelperCopy(outreach.status)}</p>
-      ) : null}
-
-      {conflictMessage ? (
-        <p role="alert" className="rounded-md bg-status-attention-bg px-3 py-2 text-sm text-status-attention">
-          {conflictMessage}
-        </p>
-      ) : null}
-
-      {isEditing ? (
-        <form onSubmit={handleSubmit(onEditSubmit)} noValidate className="flex flex-col gap-2">
-          <Textarea rows={6} invalid={Boolean(errors.message)} {...register('message')} />
-          <FieldError message={errors.message?.message} />
-          <div className="flex gap-2">
-            <Button type="submit" variant="primary" isLoading={editMutation.isPending}>
-              Save edit
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => {
-                reset({ message: displayedMessage })
-                setIsEditing(false)
-              }}
-            >
-              Cancel
-            </Button>
+        {helperCopy ? (
+          <div
+            className={cn(
+              'flex items-center gap-2 rounded-md px-3 py-2 text-sm',
+              noteAppearance?.className ?? 'bg-status-neutral-bg text-status-neutral',
+            )}
+          >
+            {noteAppearance ? <noteAppearance.Icon className="h-4 w-4 shrink-0" aria-hidden /> : null}
+            <p className="font-medium">{helperCopy}</p>
           </div>
-        </form>
-      ) : (
-        <p className="whitespace-pre-wrap rounded-md bg-gray-50 p-3 text-sm text-gray-900">{displayedMessage}</p>
-      )}
+        ) : null}
+
+        {conflictMessage ? (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-md border border-status-attention/30 bg-status-attention-bg px-3 py-2 text-sm text-status-attention"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            <div>
+              <p className="font-medium">{conflictMessage}</p>
+              <p className="mt-0.5 text-status-attention/90">
+                Your click was not applied. The panel now shows this draft&rsquo;s current state.
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        {isEditing ? (
+          <form onSubmit={handleSubmit(onEditSubmit)} noValidate className="flex flex-col gap-2">
+            <label htmlFor="outreach-edit-message" className="text-xs font-medium text-gray-700">
+              Draft message
+            </label>
+            <Textarea
+              id="outreach-edit-message"
+              rows={8}
+              invalid={Boolean(errors.message)}
+              {...register('message')}
+            />
+            <FieldError message={errors.message?.message} />
+            <p className="text-xs text-gray-500">
+              Saving records your wording on the draft and marks it edited. It is still not approved.
+            </p>
+            <div className="flex gap-2">
+              <Button type="submit" variant="primary" isLoading={editMutation.isPending}>
+                Save edit
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  reset({ message: displayedMessage })
+                  setIsEditing(false)
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            <p className="text-xs font-medium tracking-wide text-gray-500 uppercase">
+              {outreach.final_message ? 'Edited message' : 'Generated draft'}
+            </p>
+            <p className="rounded-md border border-gray-200 bg-gray-50 p-4 text-sm leading-relaxed whitespace-pre-wrap text-gray-900">
+              {displayedMessage}
+            </p>
+          </div>
+        )}
+      </div>
 
       {isActionable && !isEditing ? (
-        <div className="flex flex-wrap gap-2">
-          <Button variant="primary" isLoading={approveMutation.isPending} onClick={handleApprove}>
-            Approve
-          </Button>
-          <Button type="button" variant="secondary" onClick={startEditing}>
-            <Pencil className="h-4 w-4" aria-hidden />
-            Edit
-          </Button>
-          <Button variant="destructive" onClick={() => setRejectDialogOpen(true)}>
-            Reject
-          </Button>
-        </div>
+        <footer className="flex flex-col gap-2 border-t border-gray-200 px-5 py-4">
+          {/*
+            One filled action. Approve is the only control in this product
+            that can lead to a message leaving the account, so it is the only
+            one styled as primary; Edit and Reject stay visible beside it
+            rather than collapsing into a menu.
+          */}
+          <div className="flex flex-wrap gap-2">
+            <Button variant="primary" isLoading={approveMutation.isPending} onClick={handleApprove}>
+              Approve
+            </Button>
+            <Button type="button" variant="secondary" onClick={startEditing}>
+              <Pencil className="h-4 w-4" aria-hidden />
+              Edit
+            </Button>
+            <Button ref={rejectTriggerRef} variant="destructive" onClick={() => setRejectDialogOpen(true)}>
+              Reject
+            </Button>
+          </div>
+          <p className="text-xs text-gray-500">
+            Approving is the only way this message ever goes out. Delivery happens afterwards, on its
+            own — the status here updates once it does.
+          </p>
+        </footer>
       ) : null}
 
       <Dialog
@@ -272,6 +352,7 @@ export function OutreachReviewPanel({ outreach, applicationId }: OutreachReviewP
         onOpenChange={setRejectDialogOpen}
         title="Reject this outreach?"
         description="This cannot be undone. The draft will be marked rejected and removed from the review queue."
+        triggerRef={rejectTriggerRef}
       >
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={() => setRejectDialogOpen(false)}>

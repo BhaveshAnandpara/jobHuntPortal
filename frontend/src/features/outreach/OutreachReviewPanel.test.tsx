@@ -292,6 +292,67 @@ describe('OutreachReviewPanel', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it('exactly one action is styled as the primary/filled control, and it is Approve — Edit and Reject stay visible beside it', () => {
+    renderPanel(makeOutreach())
+    const approve = screen.getByRole('button', { name: 'Approve' })
+    const edit = screen.getByRole('button', { name: /Edit/ })
+    const reject = screen.getByRole('button', { name: 'Reject' })
+
+    expect(approve.className).toContain('bg-brand')
+    expect(edit.className).not.toContain('bg-brand')
+    expect(reject.className).not.toContain('bg-brand')
+    // Secondary does not mean hidden — both alternatives are on screen, not
+    // behind an overflow menu.
+    expect(edit).toBeVisible()
+    expect(reject).toBeVisible()
+  })
+
+  it('calls onConflict on a 409 (so a list-driven caller can refetch) — and not on success or on a non-409 failure', async () => {
+    const onConflict = vi.fn()
+    const toastErrorSpy = vi.spyOn(toast, 'error').mockImplementation(() => '')
+    let approveCalls = 0
+    server.use(
+      http.post(`${API_BASE_URL}/outreach/:outreachId/approve`, () => {
+        approveCalls += 1
+        if (approveCalls === 1) {
+          return HttpResponse.json(
+            { detail: { code: 'CONFLICT', message: 'This was already decided' } },
+            { status: 409 },
+          )
+        }
+        if (approveCalls === 2) {
+          return HttpResponse.json(
+            { detail: { code: 'VALIDATION_ERROR', message: 'Something else went wrong' } },
+            { status: 400 },
+          )
+        }
+        return HttpResponse.json(makeOutreach({ status: 'APPROVED', decided_at: '2026-01-02T00:00:00Z' }))
+      }),
+    )
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <OutreachReviewPanel outreach={makeOutreach()} onConflict={onConflict} />
+      </QueryClientProvider>,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    await waitFor(() => expect(onConflict).toHaveBeenCalledTimes(1))
+
+    // A non-409 failure is a toast, not a conflict — no refetch request.
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    await waitFor(() => expect(toastErrorSpy).toHaveBeenCalledWith('Something else went wrong'))
+    expect(onConflict).toHaveBeenCalledTimes(1)
+
+    // Nor does a successful approve pretend there was a conflict.
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    await waitFor(() => expect(approveCalls).toBe(3))
+    expect(onConflict).toHaveBeenCalledTimes(1)
+    toastErrorSpy.mockRestore()
+  })
+
   it('a non-409 mutation failure (e.g. validation) shows a toast, not the inline conflict banner', async () => {
     const toastErrorSpy = vi.spyOn(toast, 'error').mockImplementation(() => '')
     server.use(

@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(if \\($env:CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\\) { \"Set to: $env:CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\" } else { \"Not set\" })"
+      "PowerShell(if \\($env:CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\\) { \"Set to: $env:CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\" } else { \"Not set\" })",
+      "Bash(npx vitest *)",
+      "Bash(npx --yes shadcn@latest init --base-color neutral --yes --silent)"
     ]
   }
 }

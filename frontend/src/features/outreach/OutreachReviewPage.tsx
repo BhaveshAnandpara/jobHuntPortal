@@ -22,11 +22,25 @@
  * `applications`/`outreach` invalidation instead of the more targeted
  * single-application one.
  *
+ * It also passes no `onConflict`: this page's view of the record *is*
+ * `useOutreachItem`, which the 409 handling in `api/outreach.ts` already
+ * invalidates, so adding one here would only duplicate that refetch. The
+ * queue needs the prop because it reads the record from list queries
+ * instead.
+ *
+ * T9 (docs/frontend/frontend-revamp-spec.md) restyle: the "back to queue"
+ * link moved above the header where a deep-linked page's escape hatch
+ * belongs (it is the only such link on the page — not duplicated at the
+ * bottom), the page is constrained to a readable column, and the loading
+ * state is a card-shaped skeleton matching the panel it resolves into
+ * rather than three loose bars.
+ *
  * Owner: frontend-outreach-agent.
  */
 
 import { Link, useParams } from 'react-router-dom'
-import { ErrorState, PageHeader, Skeleton } from '../../components'
+import { ArrowLeft } from 'lucide-react'
+import { Card, ErrorState, PageHeader, Skeleton } from '../../components'
 import { useOutreachItem } from '../../api/outreach'
 import { toApiError } from '../../api/client'
 import { OutreachReviewPanel } from './OutreachReviewPanel'
@@ -38,18 +52,32 @@ export function OutreachReviewPage() {
   const apiError = query.error ? toApiError(query.error) : null
 
   return (
-    <div>
-      <PageHeader
-        title="Review Outreach"
-        description="Approve, edit, or reject this draft before anything is sent."
-      />
+    <div className="max-w-3xl">
+      <Link
+        to="/outreach"
+        className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-900"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+        Back to the outreach queue
+      </Link>
+
+      <div className="mt-3">
+        <PageHeader
+          title="Review Outreach"
+          description="Approve, edit, or reject this draft. Nothing is sent until you approve it."
+        />
+      </div>
 
       {query.isLoading ? (
-        <div className="flex flex-col gap-3">
-          <Skeleton className="h-6 w-1/3" />
-          <Skeleton className="h-24 w-full" />
-          <Skeleton className="h-10 w-1/2" />
-        </div>
+        <Card className="flex flex-col gap-4" aria-busy="true">
+          <div className="flex items-start justify-between gap-4">
+            <Skeleton className="h-5 w-48" />
+            <Skeleton className="h-5 w-24" />
+          </div>
+          <Skeleton className="h-3 w-2/3" />
+          <Skeleton className="h-28 w-full" />
+          <Skeleton className="h-9 w-56" />
+        </Card>
       ) : query.isError ? (
         <ErrorState
           message={
@@ -60,12 +88,6 @@ export function OutreachReviewPage() {
       ) : query.data ? (
         <OutreachReviewPanel outreach={query.data} />
       ) : null}
-
-      <p className="mt-4 text-xs text-gray-500">
-        <Link to="/outreach" className="underline hover:text-gray-700">
-          Back to the outreach queue
-        </Link>
-      </p>
     </div>
   )
 }
