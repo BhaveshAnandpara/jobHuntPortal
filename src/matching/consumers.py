@@ -28,17 +28,22 @@ from infrastructure.kafka.consumer import (
     DEFAULT_HANDLER_TIMEOUT_SECONDS,
     propagate_correlation_id,
 )
-from infrastructure.llm import LLMProviderError
+from infrastructure.llm import LlmNotConfiguredError, LLMProviderError
 from infrastructure.logging import format_context, get_logger
 from matching.clients import UserPreferencesClient
 from matching.db import matching_session_scope
 from matching.errors import MatchingError
 from matching.repository import JobMatchRepository
+from shared.contracts.opportunity_blocked import (
+    OpportunityBlockedReason,
+    report_opportunity_blocked,
+)
 from shared.errors.codes import ErrorCode
 from shared.events.envelope import EventEnvelope
 from shared.events.payloads import ProfileUpdateSummary
 from shared.types.domain.user_preferences import UserPreferences
 from shared.types.dto import NormalizedJob
+from shared.types.enums import EventType
 from shared.types.ids import CorrelationId, UserId, UserPreferencesId
 from workflows.langgraph.job_matching.context import (
     reset_correlation_id,
@@ -150,6 +155,45 @@ async def _run_matching(
     return result
 
 
+async def _block_on_missing_llm_config(
+    job: NormalizedJob, correlation_id: CorrelationId | None
+) -> None:
+    """Degrade one opportunity gracefully when its user has no usable AI
+    provider key, instead of failing the message
+    (docs/llm-provider-config/TECH.md Task 8).
+
+    A missing key is a *user-settings* problem, not a pipeline fault: every
+    retry and every dead-letter of this message would fail identically
+    until the user goes and fixes it, so the retry/DLQ path buys nothing
+    and costs the user any visibility into why their opportunity stopped.
+    Reporting the block puts the reason where the user will actually see
+    it, and returning normally keeps this consumer's loop (shared by every
+    other user on this topic) moving.
+
+    `LlmNotConfiguredError` deliberately does not subclass
+    `LLMProviderError` (see its docstring), so it reaches here rather than
+    being swallowed by the per-profile LLM fallbacks inside the workflow.
+
+    `report_opportunity_blocked` is an abstraction in `shared/` — this
+    component states *what it observed*, never what lifecycle status to
+    write and never which service records it. See that module's docstring
+    for why the dependency runs that way round, and note that it logs at
+    `warning` with `user_id`/`correlation_id` and never raises, so no
+    bookkeeping failure can resurrect the exception this handler just chose
+    to absorb.
+    """
+    await report_opportunity_blocked(
+        job_id=job.job_id,
+        user_id=job.user_id,
+        reason=OpportunityBlockedReason.LLM_NOT_CONFIGURED,
+        reported_by="job-matching-service",
+        correlation_id=correlation_id,
+        source_event_type=EventType.JOB_DISCOVERED,
+        company=job.company,
+        title=job.title,
+    )
+
+
 def handle_job_discovered(envelope: EventEnvelope[NormalizedJob]) -> None:
     """Sync entry point required by `EventConsumer`'s `EventHandler`
     contract — see this module's docstring for why. Constructible as
@@ -237,6 +281,12 @@ async def _handle_job_discovered_async(envelope: EventEnvelope[NormalizedJob]) -
 
     try:
         await _run_matching(job, correlation_id)
+    except LlmNotConfiguredError:
+        # Must precede the `except Exception` below, which would otherwise
+        # normalize this into a MatchingError and send it around the
+        # retry/DLQ loop. See _block_on_missing_llm_config's docstring.
+        await _block_on_missing_llm_config(job, correlation_id)
+        return
     except MatchingError:
         # Already normalized (carries a duck-typed error_code) — re-raise
         # unchanged so EventConsumer's retry/DLQ mechanism sees it.

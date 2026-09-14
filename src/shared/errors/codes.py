@@ -22,6 +22,11 @@ class ErrorCode(str, Enum):
     NO_CONTACTS_FOUND = "NO_CONTACTS_FOUND"
     OUTREACH_GENERATION_FAILED = "OUTREACH_GENERATION_FAILED"
     LLM_PROVIDER_ERROR = "LLM_PROVIDER_ERROR"
+    # The caller has no validated LLM provider configuration on file — a
+    # *user action* is required ("add your key in Settings"), unlike
+    # LLM_PROVIDER_ERROR, which means a configured provider failed a call.
+    # See docs/llm-provider-config/TECH.md Task 7.
+    LLM_NOT_CONFIGURED = "LLM_NOT_CONFIGURED"
     EXTERNAL_SEND_FAILED = "EXTERNAL_SEND_FAILED"
 
 

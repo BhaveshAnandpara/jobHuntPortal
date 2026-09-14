@@ -5,8 +5,13 @@
  * remote_preference, excluded_companies, min_salary, salary_currency) —
  * there is no backend "update user identity" endpoint, so this page never
  * offers to edit email/display name (see routes.md's note on why this
- * isn't a general "profile settings" page). Nothing on this page may grow
+ * isn't a general "profile settings" page). Nothing in *this form* may grow
  * beyond those six fields: they are the entire `UpdateUserPreferencesRequest`.
+ * Anything else the route hosts is a sibling form with its own endpoint,
+ * schema and save action — today that is `LlmConfigSection` (AI provider,
+ * `PUT /users/me/llm-config`, see docs/llm-provider-config/PRODUCT.md), which
+ * is composed below the preferences form and shares only the `Section`/`Field`
+ * layout primitives in `SettingsSection.tsx`.
  *
  * `PUT /users/me/preferences` is a full replace, so `onSubmit` always
  * submits the complete current form state, never a diff. A 404 from
@@ -23,12 +28,14 @@
  * Owner: frontend-profile-agent.
  */
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
-import { Button, Card, ErrorState, FieldError, Input, PageHeader, Select, Skeleton } from '../../components'
+import { Button, Card, ErrorState, Input, PageHeader, Select, Skeleton } from '../../components'
+import { Field, Section } from './SettingsSection'
+import { LlmConfigSection } from './LlmConfigSection'
 import { usePreferences, useUpdatePreferences } from '../../api/users'
 import { toApiError } from '../../api/client'
 import { formatDateTime } from '../../utils/format'
@@ -93,82 +100,6 @@ function countLabel(value: string, singular: string, plural: string): string | n
     return null
   }
   return `${count} ${count === 1 ? singular : plural}`
-}
-
-function Section({
-  title,
-  description,
-  children,
-}: {
-  title: string
-  description: string
-  children: ReactNode
-}) {
-  return (
-    <Card className="p-0">
-      <fieldset className="flex flex-col">
-        <legend className="sr-only">{title}</legend>
-        <div className="border-b border-gray-200 px-6 py-4">
-          <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
-          <p className="mt-0.5 text-xs text-gray-500">{description}</p>
-        </div>
-        <div className="flex flex-col gap-5 px-6 py-5">{children}</div>
-      </fieldset>
-    </Card>
-  )
-}
-
-/**
- * One labelled form row. The control is a render prop so the field owns the
- * `id`/`aria-describedby`/`invalid` wiring instead of every call site
- * re-deriving the same three ids by hand.
- */
-function Field({
-  id,
-  label,
-  hint,
-  optional = false,
-  badge,
-  error,
-  children,
-}: {
-  id: string
-  label: string
-  hint?: string
-  optional?: boolean
-  badge?: string | null
-  error?: string
-  children: (control: { id: string; describedBy: string | undefined; invalid: boolean }) => ReactNode
-}) {
-  const hintId = hint ? `${id}-hint` : undefined
-  const errorId = error ? `${id}-error` : undefined
-  const describedBy = [hintId, errorId].filter(Boolean).join(' ') || undefined
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-baseline justify-between gap-3">
-        <label htmlFor={id} className="text-sm font-medium text-gray-900">
-          {label}
-          {optional ? <span className="ml-1 font-normal text-gray-400">(optional)</span> : null}
-        </label>
-        {badge ? <span className="shrink-0 text-xs text-gray-500">{badge}</span> : null}
-      </div>
-      {children({ id, describedBy, invalid: Boolean(error) })}
-      {hint ? (
-        <p id={hintId} className="text-xs text-gray-500">
-          {hint}
-        </p>
-      ) : null}
-      {/* `FieldError` is the app-wide inline validation convention (see
-          error-handling.md); it's wrapped here only to give the message an id
-          the control can point at via `aria-describedby`. */}
-      {error ? (
-        <div id={errorId}>
-          <FieldError message={error} />
-        </div>
-      ) : null}
-    </div>
-  )
 }
 
 function PreferencesFormSkeleton() {
@@ -460,6 +391,14 @@ export function SettingsPage() {
           </div>
         </form>
       )}
+
+      {/* A separate endpoint, a separate form, a separate save — rendered
+          outside the preferences form (never nested in it) and outside its
+          loading/error branch, so a user whose preferences failed to load
+          can still fix the AI provider key that most of the app depends on. */}
+      <div className="mt-4">
+        <LlmConfigSection />
+      </div>
     </div>
   )
 }

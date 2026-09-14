@@ -62,6 +62,26 @@ export const userHandlers = [
       salary_currency: null,
     }),
   ),
+  // AI provider config. The happy path is "already configured"; tests that
+  // need the unset case override this with a 404 (which is the backend's
+  // own "not configured yet" convention, not an error). `key_hint` is the
+  // only echo of a stored key that exists anywhere — never the key itself.
+  http.get(`${base}/users/me/llm-config`, () =>
+    HttpResponse.json({
+      provider: 'groq',
+      model: null,
+      key_hint: '...ab12',
+      last_validated_at: '2026-03-01T09:00:00Z',
+    }),
+  ),
+  http.put(`${base}/users/me/llm-config`, () =>
+    HttpResponse.json({
+      provider: 'claude',
+      model: null,
+      key_hint: '...wxyz',
+      last_validated_at: '2026-03-02T09:00:00Z',
+    }),
+  ),
 ]
 
 // ---------------------------------------------------------------------------
@@ -221,6 +241,52 @@ export const contactHandlers = [
 ]
 
 // ---------------------------------------------------------------------------
+// Resume Tailoring Service
+// ---------------------------------------------------------------------------
+
+/**
+ * The baseline here is deliberately "nothing generated yet" — a 404, which
+ * is this route's documented "unset is not an error" answer (see
+ * `src/api/tailoredResume.ts`). That is the state every opportunity starts
+ * in, so it is what an unrelated page test should see; tests that need an
+ * existing record or a generated one override these with `server.use(...)`.
+ */
+export const tailoredResumeHandlers = [
+  http.get(`${base}/jobs/:jobId/tailored-resume`, () =>
+    HttpResponse.json(
+      {
+        detail: {
+          code: 'NOT_FOUND',
+          message: 'no tailored resume has been generated for job job-1',
+        },
+      },
+      { status: 404 },
+    ),
+  ),
+  http.post(`${base}/jobs/:jobId/tailored-resume`, () =>
+    HttpResponse.json(
+      {
+        improved: true,
+        base_score: 0.62,
+        achieved_score: 0.81,
+        id: 'tailored-1',
+        message: null,
+      },
+      { status: 201 },
+    ),
+  ),
+  http.get(`${base}/jobs/:jobId/tailored-resume/download`, () =>
+    HttpResponse.arrayBuffer(new ArrayBuffer(8), {
+      headers: {
+        'Content-Type':
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Content-Disposition': 'attachment; filename="tailored-resume-job-1.docx"',
+      },
+    }),
+  ),
+]
+
+// ---------------------------------------------------------------------------
 // Outreach Service
 // ---------------------------------------------------------------------------
 
@@ -305,6 +371,7 @@ export const handlers = [
   ...jobHandlers,
   ...matchingHandlers,
   ...contactHandlers,
+  ...tailoredResumeHandlers,
   ...outreachHandlers,
   ...trackingHandlers,
 ]

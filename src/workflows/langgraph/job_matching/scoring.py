@@ -64,6 +64,80 @@ class ProfileScoringOutput(BaseModel):
     matched_skills: list[str] = []
     missing_skills: list[str] = []
     reasoning: str = ""
+    hard_blocker: str | None = None
+    insufficient_detail: bool = False
+
+
+# Kept as module-level constants, like
+# `resume_tailoring.generation._ANTI_FABRICATION_RULES`, so the instruction
+# text can be asserted profession-neutral in isolation. The rendered prompt
+# as a whole cannot be: its ALTERNATIVE REQUIREMENTS worked examples name
+# real tools on purpose, and the job/profile blocks interpolate whatever
+# profession the user actually works in.
+_HARD_BLOCKER_RULES = (
+    "HARD BLOCKERS\n"
+    "A hard blocker is a requirement that the posting itself states as "
+    "non-negotiable AND that this candidate clearly fails. Report at most "
+    "one — the single most decisive — in hard_blocker, as a short phrase "
+    "naming the requirement and why the candidate fails it. If there is no "
+    "such requirement, hard_blocker MUST be null.\n\n"
+
+    "This is a much higher bar than a missing skill. A missing skill lowers "
+    "the score; a hard blocker means the application cannot succeed no "
+    "matter how strong the rest of the profile is.\n\n"
+
+    "Set hard_blocker ONLY when BOTH of these hold:\n"
+    "1. The posting states the requirement in mandatory terms — wording such "
+    "as 'must have', 'required', 'mandatory', 'only candidates who', "
+    "'not negotiable', 'no exceptions', 'ineligible without'.\n"
+    "2. The candidate's profile clearly and verifiably fails it — not merely "
+    "that the profile is silent on the subject.\n\n"
+
+    "NEVER invent a requirement the posting does not actually state. In "
+    "particular, never assume a requirement about legal work authorization, "
+    "citizenship or residency, background vetting or clearance, a licence, "
+    "registration or certification, a specific degree or academic "
+    "qualification, a mandatory physical location or on-site presence, a "
+    "mandatory minimum number of years, a language, a shift pattern, or a "
+    "travel obligation unless the posting states that requirement in its own "
+    "words. The absence of a statement is not a requirement.\n\n"
+
+    "NEVER treat silence in the profile as failure. If the posting states a "
+    "mandatory requirement and the profile simply does not mention it, that "
+    "is unknown, not failed — hard_blocker stays null. Only a genuine, "
+    "evidenced conflict counts.\n\n"
+
+    "The same discipline that governs missing_skills governs this field: do "
+    "NOT promote an ordinary preferred or nice-to-have requirement into a "
+    "hard blocker, and do NOT treat one unsatisfied option from an "
+    "alternative requirement group as a hard blocker when another option in "
+    "that group is satisfied.\n\n"
+
+    "A hard blocker does not by itself force the score to zero. Score the "
+    "fit on its merits and report the blocker separately.\n\n"
+)
+
+_INSUFFICIENT_DETAIL_RULES = (
+    "INSUFFICIENT DETAIL\n"
+    "Set insufficient_detail to true ONLY when the posting carries so little "
+    "actual content that any score would be guesswork — for example a "
+    "one-line forwarded note, a short informal social post, a title and a "
+    "company with no described responsibilities or requirements, or a body "
+    "that is mostly boilerplate about the organization with nothing about "
+    "the role itself.\n\n"
+
+    "Judge this on the substance of the description text, not on which "
+    "structured fields happen to be empty. A posting that describes the "
+    "responsibilities and requirements properly is sufficient even if "
+    "location, experience or the extracted skill list are blank.\n\n"
+
+    "Do NOT set it merely because the posting is short, informally written, "
+    "or omits a detail you would have liked. Otherwise it MUST be false.\n\n"
+
+    "When it is true, still return your best score and still fill the other "
+    "fields — the flag marks that score as low-confidence, it does not "
+    "replace it.\n\n"
+)
 
 
 def _joined(values: list[str], *, empty: str) -> str:
@@ -174,6 +248,9 @@ def build_scoring_prompt(
         "6. Transferable experience is acknowledged appropriately.\n"
         "7. The overall score reflects actual job fit, not raw keyword overlap.\n\n"
 
+        f"{_HARD_BLOCKER_RULES}"
+        f"{_INSUFFICIENT_DETAIL_RULES}"
+
         "JOB POSTING\n"
         f"Title: {job.title}\n"
         f"Company: {job.company}\n"
@@ -244,7 +321,13 @@ def build_scoring_prompt(
         "satisfies, including clearly transferable equivalents where appropriate.\n"
         "- missing_skills: genuine unsatisfied required/preferred capabilities only.\n"
         "- reasoning: a concise explanation of the strongest fit signals, important "
-        "gaps, and how alternative/transferable requirements affected the judgement.\n\n"
+        "gaps, and how alternative/transferable requirements affected the judgement. "
+        "Write it for the candidate to read: two to four plain sentences, no "
+        "bullet points, no restating of the numeric factor scores.\n"
+        "- hard_blocker: a stated non-negotiable requirement this candidate clearly "
+        "fails, or null. See HARD BLOCKERS above.\n"
+        "- insufficient_detail: whether the posting is too thin to score with "
+        "confidence. See INSUFFICIENT DETAIL above.\n\n"
 
         "FINAL SELF-CHECK\n"
         "Before answering, inspect matched_skills and missing_skills one final time:\n"
@@ -252,19 +335,59 @@ def build_scoring_prompt(
         "- remove semantic duplicates,\n"
         "- remove any gap already satisfied by an accepted alternative,\n"
         "- remove any item appearing in both lists,\n"
-        "- ensure the overall score is consistent with the reasoning."
+        "- ensure the overall score is consistent with the reasoning.\n"
+        "Then check the two judgement fields one final time:\n"
+        "- if hard_blocker is not null, confirm you can point to the posting's own "
+        "mandatory wording for it AND to the profile evidence that the candidate "
+        "fails it; if you cannot do both, set it to null,\n"
+        "- confirm hard_blocker is not merely the most important entry in "
+        "missing_skills restated,\n"
+        "- if insufficient_detail is true, confirm the description itself is "
+        "genuinely too thin to judge, rather than merely short or missing a "
+        "structured field; if not, set it to false."
     )
+
+
+def _cleaned_blocker(raw: str | None) -> str | None:
+    """Collapse the model's "no blocker" answers onto one representation.
+
+    A structured-output model asked for `str | None` will sometimes answer
+    with an empty/whitespace string, or spell the absence out in words,
+    rather than emitting a real null. Every one of those means "no blocker",
+    and the UI raises a prominent warning on any non-None value, so they are
+    normalized here rather than shown to the user as a blocker reading
+    "none".
+    """
+    if raw is None:
+        return None
+    blocker = raw.strip()
+    if not blocker:
+        return None
+    if blocker.strip(" .").casefold() in {"none", "null", "n/a", "na", "no", "false"}:
+        return None
+    return blocker
 
 
 def to_profile_match_score(
     profile: ResumeProfile, output: ProfileScoringOutput
 ) -> ProfileMatchScore:
+    """Project the LLM's output onto the canonical `ProfileMatchScore`.
+
+    `reasoning`, `hard_blocker` and `insufficient_detail` are carried
+    through rather than dropped. They are explanation only: `score`,
+    `matched_skills` and `missing_skills` are computed exactly as before,
+    and in particular a `hard_blocker` does not clamp or otherwise alter
+    `score`.
+    """
     return ProfileMatchScore(
         profile_id=profile.profile_id,
         resume_id=profile.resume_id,
         score=max(0.0, min(1.0, output.overall_score)),
         matched_skills=output.matched_skills,
         missing_skills=output.missing_skills,
+        reasoning=output.reasoning.strip(),
+        hard_blocker=_cleaned_blocker(output.hard_blocker),
+        insufficient_detail=output.insufficient_detail,
     )
 
 

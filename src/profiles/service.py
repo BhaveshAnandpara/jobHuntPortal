@@ -22,7 +22,14 @@ from infrastructure.kafka.producer import EventProducer
 from infrastructure.llm import LLMClient
 from infrastructure.logging import format_context, get_logger
 from profiles.events import publish_profile_updated
-from profiles.parsing import SUPPORTED_EXTENSIONS, ResumeParsingError, parse_resume
+from profiles.parsing import (
+    SUPPORTED_EXTENSIONS,
+    ResumeParsingError,
+    enrich_profile,
+    extract_text,
+    parse_resume,
+    profile_needs_enrichment,
+)
 from profiles.repository import (
     CandidateProfileRepository,
     ResumeRepository,
@@ -231,6 +238,118 @@ class ProfileService:
             format_context(resume_id=resume_id, profile_id=profile.id, duration_ms=duration_ms),
         )
         return profile
+
+    async def ensure_enriched_profile(
+        self, profile: CandidateProfile, *, client: LLMClient | None = None
+    ) -> CandidateProfile:
+        """Transparently backfill `contact`/`work_history` on a profile that
+        predates those fields, and persist the result.
+
+        Every resume uploaded before that extraction shipped produced a
+        `CandidateProfile` with `contact=None, work_history=[]` — the
+        columns' defaults, because the prompt of the day never asked for
+        either. Rather than forcing those users to re-upload, the first
+        feature that actually needs the fields calls this: it re-runs the
+        current extraction prompt over the resume's already-stored
+        `raw_text` and updates the *existing* row in place.
+
+        **At most one re-parse per resume.** The persisted enrichment is
+        itself the memo — once the row carries a `contact` or a
+        `work_history`, `profile_needs_enrichment` reads the profile as
+        already-parsed and this method returns it untouched without an LLM
+        call. No flag column and no cache table are needed for that; adding
+        one would be a second source of truth for a question the data
+        already answers.
+
+        `client` is the calling user's own `LLMClient`, resolved by the
+        caller via `get_user_llm_client(user_id)` — the same "caller
+        resolves the client" convention `parse_resume` and
+        `extract_profile_fields` already follow, and what lets an on-demand
+        feature run this on the requesting user's credentials. It falls back
+        to the service's own `llm_client` when omitted, for callers (the
+        `/profiles` routes) that already had one injected.
+
+        Raises `ProfileError` when the profile's resume is gone, when no
+        usable text can be recovered for it, or when extraction fails — the
+        caller needs to know it is about to work from un-enriched data
+        rather than discover it as an empty document later.
+        """
+        if not profile_needs_enrichment(profile):
+            return profile
+
+        llm_client = client or self._llm_client
+        if llm_client is None:
+            raise ProfileError(
+                ErrorCode.LLM_PROVIDER_ERROR, "no LLM client is configured"
+            )
+
+        resume = await self._resumes.get(profile.resume_id)
+        if resume is None:
+            raise ProfileError(ErrorCode.NOT_FOUND, "resume does not exist")
+
+        logger.info(
+            "Profile enrichment started | %s",
+            format_context(profile_id=profile.id, resume_id=resume.id),
+        )
+
+        try:
+            raw_text = resume.raw_text
+            if not raw_text or not raw_text.strip():
+                # Virtually never taken: `raw_text` is written by
+                # `mark_parsed` for every resume that produced a profile at
+                # all, and it is exactly what the original parse extracted.
+                # Kept for the rows where it isn't (a text column cleared by
+                # hand, a profile seeded outside the upload flow) so those
+                # degrade to re-reading the original file rather than to a
+                # profile that can never be enriched.
+                logger.warning(
+                    "Resume has no stored raw_text; re-extracting from the "
+                    "original file | %s",
+                    format_context(resume_id=resume.id),
+                )
+                raw_text = extract_text(
+                    resume.file_name, self._storage.read(resume.storage_uri)
+                )
+            enriched = await enrich_profile(profile, raw_text, client=llm_client)
+        except ResumeParsingError as error:
+            logger.exception(
+                "Profile enrichment failed | %s",
+                format_context(
+                    profile_id=profile.id,
+                    resume_id=resume.id,
+                    error_code=error.code.value,
+                    error=error.message,
+                ),
+            )
+            raise ProfileError(error.code, error.message) from error
+        except OSError as error:
+            logger.exception(
+                "Profile enrichment could not read the original resume file | %s",
+                format_context(profile_id=profile.id, resume_id=resume.id),
+            )
+            raise ProfileError(
+                ErrorCode.RESUME_PARSE_FAILED,
+                f"could not read the stored resume file: {error}",
+            ) from error
+
+        persisted = await self._profiles.set_contact_and_work_history(
+            profile.id,
+            contact=enriched.contact,
+            work_history=enriched.work_history,
+        )
+        if persisted is None:
+            raise ProfileError(ErrorCode.NOT_FOUND, "profile does not exist")
+
+        logger.info(
+            "Profile enrichment persisted | %s",
+            format_context(
+                profile_id=persisted.id,
+                resume_id=resume.id,
+                work_history=len(persisted.work_history),
+                has_contact=persisted.contact is not None,
+            ),
+        )
+        return persisted
 
     async def list_resumes(self, user_id: UserId) -> list[Resume]:
         """`GET /resumes`."""

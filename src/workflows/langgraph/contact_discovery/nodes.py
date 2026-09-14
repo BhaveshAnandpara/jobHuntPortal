@@ -8,10 +8,13 @@ Owned by Contact Discovery Service.
 
 Dependency injection follows `workflows/langgraph/job_matching/nodes.py`'s
 established idiom exactly: each node reaches a lazily-constructed,
-module-level default (a real `PeopleSearchClient`, a real `LLMClient`, the
-shared DB session scope from `contacts.db`, and `contacts.events`'
-producer). Tests override via the `set_*` functions exported below rather
-than patching internals directly.
+module-level default (a real `PeopleSearchClient`, the shared DB session
+scope from `contacts.db`, and `contacts.events`' producer), except the
+`LLMClient`, which is resolved per *user* from `state["user_id"]`
+(`infrastructure.llm.get_user_llm_client` — see
+docs/llm-provider-config/PRODUCT.md) so every AI call runs on that user's
+own provider credentials. Tests override via the `set_*` functions exported
+below rather than patching internals directly.
 """
 
 from __future__ import annotations
@@ -29,13 +32,13 @@ from infrastructure.external.people_search import (
     PeopleSearchQuery,
     default_people_search_provider,
 )
-from infrastructure.llm import LLMClient, LLMProviderError
+from infrastructure.llm import LLMClient, LLMProviderError, get_user_llm_client
 from shared.errors.codes import ErrorCode
 from shared.types.domain.contact import Contact
 from shared.types.domain.contact_score import ContactScore
 from shared.types.dto import ContactRankingResult, RankedContact, WorkflowError
 from shared.types.enums import ContactStatus, ContactType
-from shared.types.ids import ContactId, ContactScoreId
+from shared.types.ids import ContactId, ContactScoreId, UserId
 from workflows.langgraph.contact_discovery.context import (
     ContactPersistenceDetail,
     get_contact_details,
@@ -82,15 +85,32 @@ def set_people_search_client(client: PeopleSearchClient | None) -> None:
     _people_search_client = client
 
 
-def _get_llm_client() -> LLMClient:
-    global _llm_client
-    if _llm_client is None:
-        _llm_client = LLMClient()
-    return _llm_client
+async def _get_llm_client(user_id: UserId) -> LLMClient:
+    """The searching user's own `LLMClient`.
+
+    Every AI call runs on the calling user's own provider credentials
+    (docs/llm-provider-config/PRODUCT.md), so there is no process-wide
+    client to cache any more — a module-level singleton would be exactly the
+    cross-user key sharing this replaces. `get_user_llm_client` raises
+    `LlmNotConfiguredError` if that user has no validated configuration;
+    catching it per message so one user's missing key can't affect another's
+    opportunity is the consumer-resilience task's job
+    (docs/llm-provider-config/TECH.md Task 8), not this node's.
+    """
+    if _llm_client is not None:
+        return _llm_client
+    return await get_user_llm_client(user_id)
 
 
 def set_llm_client(client: LLMClient | None) -> None:
-    """Test seam. Pass `None` to restore the lazily-constructed default."""
+    """Test seam. Pass `None` to restore per-user resolution.
+
+    Unchanged in shape from the lazy-singleton era on purpose: an injected
+    client still overrides resolution for *every* user, which is what the
+    existing workflow/consumer tests rely on. It is now an override rather
+    than a cache — with nothing injected, each call resolves the client for
+    the user the work belongs to.
+    """
     global _llm_client
     _llm_client = client
 
@@ -120,7 +140,7 @@ async def search_contacts(state: ContactDiscoveryState) -> ContactDiscoveryState
     their title matches the role.
     """
     company, title, location = state["company"], state["title"], state["location"]
-    llm_client = _get_llm_client()
+    llm_client = await _get_llm_client(state["user_id"])
     errors: list[WorkflowError] = list(state["errors"])
 
     try:
@@ -194,7 +214,7 @@ async def rank_contacts(state: ContactDiscoveryState) -> ContactDiscoveryState:
         return {**state, "ranked_contacts": []}
 
     company, title = state["company"], state["title"]
-    llm_client = _get_llm_client()
+    llm_client = await _get_llm_client(state["user_id"])
     errors: list[WorkflowError] = list(state["errors"])
     details = get_contact_details()
 

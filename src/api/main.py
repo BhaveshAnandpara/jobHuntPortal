@@ -4,8 +4,9 @@ docs/architecture/api-contracts.md.
 
 Each router is defined and owned by its component (users/api/,
 profiles/api/, jobs/ingestion/api.py, jobs/discovery/api.py,
-matching/api/, contacts/api/, outreach/api/, tracking/api/, plus the
-infrastructure-owned probe in infrastructure/health/api.py) — this module
+matching/api/, contacts/api/, outreach/api/, tracking/api/,
+resume_tailoring/api.py, plus the infrastructure-owned probe in
+infrastructure/health/api.py) — this module
 only wires them together. No route or business logic is defined here.
 
 Also owns the one process-wide `configure_logging()` call (via the
@@ -56,6 +57,7 @@ from jobs.ingestion.api import router as job_ingestion_router
 from matching.api import router as matching_router
 from outreach.api import router as outreach_router
 from profiles.api import router as profiles_router
+from resume_tailoring.api import router as resume_tailoring_router
 from tracking.api import router as tracking_router
 from users.api import auth_router
 from users.api import router as users_router
@@ -88,6 +90,7 @@ app.include_router(matching_router)
 app.include_router(contacts_router)
 app.include_router(outreach_router)
 app.include_router(tracking_router)
+app.include_router(resume_tailoring_router)
 
 app.add_middleware(
     CORSMiddleware,

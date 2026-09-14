@@ -67,6 +67,13 @@ const STATUS_PRESENTATION: Record<AnyKnownStatus, StatusPresentation> = {
   // moving forward, distinct from an archived/withdrawn one.
   IGNORED: { label: 'Ignored', category: 'negative' },
   WITHDRAWN: { label: 'Withdrawn', category: 'neutral' },
+  // Not a stage of the lifecycle but a pause on it: the pipeline stopped
+  // because this user has no usable AI provider key (see
+  // shared/types/enums.py's note on the value, and
+  // docs/llm-provider-config/PRODUCT.md). "Attention" because it is waiting
+  // on the user specifically — nothing here failed on its merits, and it
+  // resumes on its own once a key is saved in Settings.
+  BLOCKED_LLM_NOT_CONFIGURED: { label: 'Paused — add your AI key', category: 'attention' },
 
   // OutreachStatus (DRAFT/APPLIED/REJECTED overlap in spelling only, not
   // value, with ApplicationStatus above — TypeScript keys them once since

@@ -10,6 +10,16 @@ already persisted (`job_matches.profile_scores`) but not previously
 projected onto this response type. Additive-only, and reuses the canonical
 `ProfileMatchScore` shape from `shared.types.dto` rather than introducing a
 second scoring representation.
+
+`reasoning`/`hard_blocker`/`insufficient_detail` follow that same precedent
+exactly: they are not new domain fields and not new columns, but a
+projection of the *selected* profile's already-persisted
+`ProfileMatchScore` (the `profile_scores` entry whose `profile_id ==
+selected_profile_id`) onto the top level of this response, so the UI can
+show them front-and-center without reading the array. They sit beside
+`recommendation`, which is likewise a judgement only this response carries.
+`JobMatch`'s own locked field list (docs/architecture/domain-model.md
+#jobmatch) is deliberately NOT extended — see `matching.api.routes`.
 """
 
 from datetime import datetime
@@ -30,6 +40,12 @@ class JobMatchResponse(BaseModel):
     missing_skills: list[str] = []
     recommendation: MatchRecommendation
     profile_scores: list[ProfileMatchScore] = []
+    # Projected from the selected profile's entry in `profile_scores`.
+    # Defaults cover both a match persisted before these fields existed and
+    # a match whose selected profile has no entry in the array.
+    reasoning: str = ""
+    hard_blocker: str | None = None
+    insufficient_detail: bool = False
     matched_at: datetime
 
 

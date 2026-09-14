@@ -12,9 +12,12 @@ was JSON that doesn't fit the schema (`SCHEMA_VALIDATION_FAILED`).
 drives up to `LLMConfig.repair_attempts` re-prompts for structured-output
 failures (a different retry budget on purpose — see
 `LLMFailureReason.retryable`). A caller that doesn't inject a provider gets
-whichever `LLMProvider` `LLMConfig.from_env()`'s `provider` field selects —
-`"groq"` (default/primary), `"gemini"`, or `"ollama"` (local-first fallback
-per about_project.md) — see `_default_provider()`.
+whichever `LLMProvider` its `LLMConfig`'s `provider` field selects —
+`"groq"` (default/primary), `"gemini"`, `"claude"`, `"openai"`, or
+`"ollama"` (local-first fallback per about_project.md) — see
+`_default_provider()`. That config comes either from `LLMConfig.from_env()`
+(the process-wide, operator-configured path) or from a user's own stored
+provider/key (`infrastructure.llm.user_client.get_user_llm_client`).
 """
 
 from __future__ import annotations
@@ -205,9 +208,23 @@ def repair_prompt(original_prompt: str, raw_response: str, problem: str) -> str:
 
 
 def _default_provider(config: LLMConfig) -> LLMProvider:
-    # Imported lazily to avoid a module-load-time dependency on the
-    # `groq`/`google-genai`/`ollama` SDKs for callers that always inject
-    # their own provider (e.g. tests).
+    """Build the `LLMProvider` named by `config.provider`.
+
+    Every provider name this layer understands is resolved here, so both
+    entry points — the process-wide `LLMConfig.from_env()` path and the
+    per-user path (`infrastructure.llm.user_client.get_user_llm_client`,
+    which builds an `LLMConfig` from a stored `user_llm_config` row) — get
+    the same mapping from one place. `claude`/`openai` are the two
+    user-selectable providers added for per-user configuration
+    (docs/llm-provider-config/TECH.md); `ollama` stays the fallback for any
+    unrecognized name, preserving this function's original local-first
+    default behavior.
+
+    Each import is lazy so a caller that always injects its own provider
+    (e.g. tests) never pays a module-load-time dependency on the
+    `groq`/`google-genai`/`anthropic`/`openai`/`ollama` SDKs, and so
+    selecting one vendor never imports another's SDK.
+    """
     if config.provider == "groq":
         from infrastructure.llm.groq_provider import GroqProvider
 
@@ -217,6 +234,16 @@ def _default_provider(config: LLMConfig) -> LLMProvider:
         from infrastructure.llm.gemini_provider import GeminiProvider
 
         return GeminiProvider(config=config)
+
+    if config.provider == "claude":
+        from infrastructure.llm.anthropic_provider import AnthropicProvider
+
+        return AnthropicProvider(config=config)
+
+    if config.provider == "openai":
+        from infrastructure.llm.openai_provider import OpenAIProvider
+
+        return OpenAIProvider(config=config)
 
     from infrastructure.llm.ollama_provider import OllamaProvider
 

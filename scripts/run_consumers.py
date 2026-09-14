@@ -66,10 +66,25 @@ from infrastructure.database.metadata import load_metadata
 from infrastructure.kafka.consumer import EventConsumer
 from infrastructure.kafka.topics import Topic
 from infrastructure.logging import configure_logging, get_logger
+from shared.contracts.opportunity_blocked import set_opportunity_blocked_reporter
 
 load_metadata()
 configure_logging(log_filename="consumers.log")
 logger = get_logger(__name__)
+
+# Wire `shared.contracts.opportunity_blocked`'s port to Tracking Service's
+# implementation. When Job Matching / Contact Discovery / Outreach hit
+# `LlmNotConfiguredError` mid-pipeline they report the opportunity blocked
+# through that abstraction rather than importing Tracking Service — see its
+# module docstring for why the dependency is inverted, and note that this
+# module is exactly the composition root it names (the same role
+# `api/main.py` plays for the HTTP side: it already imports every component
+# precisely so the components need not import each other).
+#
+# Without this line the block is still logged at WARNING by every affected
+# consumer, but never recorded on the opportunity — which is why it belongs
+# here, next to the consumer list, rather than inside any one component.
+set_opportunity_blocked_reporter(tracking_consumers.record_opportunity_blocked)
 
 # One EventConsumer per (topic, consumer group) pair from
 # docs/architecture/kafka-topics.md's per-topic tables. `profiles.updated`

@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 
 from infrastructure.auth.dependencies import get_current_user_id
 from profiles.api.dependencies import get_profile_service
-from profiles.api.routes import router
+from profiles.api.routes import require_llm_configured, router
 from profiles.service import ProfileService
 from profiles.storage import LocalResumeStorage
 from shared.types.domain.candidate_profile import CandidateProfile
@@ -67,6 +67,12 @@ def app_and_deps(event_producer, resume_storage):
     app.include_router(router)
     app.dependency_overrides[get_profile_service] = lambda: service
     app.dependency_overrides[get_current_user_id] = lambda: user_id
+    # `POST /resumes` is gated on a validated per-user LLM config
+    # (docs/llm-provider-config/TECH.md Task 7). These tests are about the
+    # endpoint's own behavior for an already-configured user, so the gate is
+    # satisfied here; `tests/profiles/test_llm_gating.py` exercises the gate
+    # itself against a real `user_llm_config` row.
+    app.dependency_overrides[require_llm_configured] = lambda: None
 
     return app, resumes, profiles, user_id
 
@@ -203,6 +209,7 @@ def test_post_resumes_llm_receives_decoded_resume_text(
     app.include_router(router)
     app.dependency_overrides[get_profile_service] = lambda: service
     app.dependency_overrides[get_current_user_id] = lambda: UserId(uuid4())
+    app.dependency_overrides[require_llm_configured] = lambda: None
     client = TestClient(app)
 
     original_text = "Jane Doe\nMechanical Design Engineer\nSolidWorks\nGD&T"

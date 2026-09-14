@@ -408,3 +408,68 @@ async def test_patch_status_publishes_applications_updated_with_correct_fields(
     # Manual PATCH has no inbound envelope to propagate from — a fresh
     # correlation_id is minted (tracking/api/routes.py).
     assert published.correlation_id is not None
+
+
+# ---------------------------------------------------------------------------
+# BLOCKED_LLM_NOT_CONFIGURED (docs/llm-provider-config/TECH.md Task 8)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_patch_status_allows_dismissing_an_llm_blocked_opportunity(
+    session_factory: async_sessionmaker[AsyncSession], _wire_broker: InMemoryBroker
+) -> None:
+    """A user who sees an opportunity paused on an AI provider key they
+    don't intend to add can dismiss or withdraw it by hand. (Recovering by
+    actually adding the key needs no manual PATCH — the pipeline's next
+    event outranks the blocked state; see `tracking.consumers._STATUS_RANK`.)
+    """
+    application = _application(status=ApplicationStatus.BLOCKED_LLM_NOT_CONFIGURED)
+    await _seed(session_factory, application)
+    client = _client(session_factory)
+
+    response = client.patch(
+        f"/applications/{application.id}/status", json={"new_status": "IGNORED"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "IGNORED"
+
+    async with session_factory() as session:
+        stored = await ApplicationRepository(session).get(application.id)
+        assert stored.status == ApplicationStatus.IGNORED
+
+
+@pytest.mark.asyncio
+async def test_patch_status_rejects_an_undeclared_edge_out_of_the_blocked_state(
+    session_factory: async_sessionmaker[AsyncSession], _wire_broker: InMemoryBroker
+) -> None:
+    """The blocked state gets the same narrow, explicit outgoing edge set
+    every other mid-chain stage gets — not a free pass to anywhere."""
+    application = _application(status=ApplicationStatus.BLOCKED_LLM_NOT_CONFIGURED)
+    await _seed(session_factory, application)
+    client = _client(session_factory)
+
+    response = client.patch(
+        f"/applications/{application.id}/status", json={"new_status": "INTERVIEW"}
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
+    assert _wire_broker.log(Topic.APPLICATIONS_UPDATED.value) == []
+
+
+def test_no_status_manually_transitions_into_the_llm_blocked_state() -> None:
+    """`BLOCKED_LLM_NOT_CONFIGURED` is reachable only from a pipeline
+    component's report via `shared.contracts.opportunity_blocked`, never
+    from `PATCH /applications/{id}/status` — so it appears as a key in the
+    transition table but in no other status's value set.
+    """
+    from tracking.api.routes import _MANUAL_TRANSITIONS
+
+    assert ApplicationStatus.BLOCKED_LLM_NOT_CONFIGURED in _MANUAL_TRANSITIONS
+    for source, targets in _MANUAL_TRANSITIONS.items():
+        assert ApplicationStatus.BLOCKED_LLM_NOT_CONFIGURED not in targets, source
+
+    # Every member is still listed explicitly — the table's own invariant.
+    assert set(_MANUAL_TRANSITIONS) == set(ApplicationStatus)

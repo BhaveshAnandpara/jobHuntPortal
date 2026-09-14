@@ -298,3 +298,62 @@ def test_handle_contacts_requested_sync_wrapper_enforces_a_hard_timeout(monkeypa
 
     with pytest.raises(TimeoutError):
         consumers_module.handle_contacts_requested(envelope)
+
+
+@pytest.mark.asyncio
+async def test_handle_contacts_requested_blocks_opportunity_when_llm_not_configured(
+    session_factory,
+) -> None:
+    """docs/llm-provider-config/TECH.md Task 8: a user with no validated AI
+    provider key pauses that one opportunity and returns normally, rather
+    than raising into `EventConsumer`'s retry/DLQ path — every retry would
+    fail identically until the user fixes their key in Settings.
+
+    `LlmNotConfiguredError` must be caught *before* the generic
+    `except Exception` that normalizes everything else into a
+    `ContactDiscoveryError`.
+    """
+    from infrastructure.llm import LlmNotConfiguredError
+    from shared.contracts.opportunity_blocked import (
+        OpportunityBlockedReason,
+        set_opportunity_blocked_reporter,
+    )
+
+    request = make_search_request()
+    broker = InMemoryBroker()
+    db_module.set_session_factory(session_factory)
+    events_module.set_event_producer(
+        EventProducer("contact-discovery-service", client=InMemoryProducerClient(broker))
+    )
+
+    class _UnconfiguredGraph:
+        @staticmethod
+        async def ainvoke(state):
+            raise LlmNotConfiguredError(state["user_id"])
+
+    consumers_module.set_graph(_UnconfiguredGraph())
+
+    reports: list[dict] = []
+
+    async def _reporter(**kwargs: object) -> None:
+        reports.append(kwargs)
+
+    envelope = build_envelope(
+        Topic.CONTACTS_REQUESTED, request, producer="job-matching-service"
+    )
+
+    set_opportunity_blocked_reporter(_reporter)
+    try:
+        # Returns normally — the assertion this whole test exists for.
+        await consumers_module._handle_contacts_requested_async(envelope)
+    finally:
+        set_opportunity_blocked_reporter(None)
+
+    assert len(reports) == 1
+    assert reports[0]["reason"] is OpportunityBlockedReason.LLM_NOT_CONFIGURED
+    assert reports[0]["user_id"] == request.user_id
+    assert reports[0]["job_id"] == request.job_id
+    assert reports[0]["reported_by"] == "contact-discovery-service"
+    assert reports[0]["correlation_id"] == envelope.correlation_id
+    # No half-finished result published for a run that never happened.
+    assert broker.log(Topic.CONTACTS_FOUND.value) == []

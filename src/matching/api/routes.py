@@ -48,6 +48,37 @@ JobMatchRepositoryDep = Annotated[JobMatchRepository, Depends(get_job_match_repo
 
 
 def _job_match_response(job_match: JobMatch) -> JobMatchResponse:
+    """Project a persisted `JobMatch` onto its API response.
+
+    `reasoning`/`hard_blocker`/`insufficient_detail` are read off the
+    *selected* profile's `ProfileMatchScore` — the same entry whose score
+    already became `JobMatch.match_score` (see
+    `workflows.langgraph.job_matching.nodes.persist_and_publish`, which
+    picks the winner the same way). Derived here at response-construction
+    time rather than stored a second time: they are already persisted
+    inside `job_matches.profile_scores`, so this needs no new column and no
+    migration, and it cannot drift from the array it is read from.
+
+    `JobMatch` itself is deliberately not given these three as top-level
+    fields: its shape is locked in docs/architecture/domain-model.md
+    #jobmatch. `ProfileMatchScore`, which does carry them, is not locked in
+    that table — it is listed there only as the element type of the
+    optional `profile_scores` field.
+
+    A match persisted before these fields existed, or one whose selected
+    profile is somehow absent from `profile_scores`, falls through to the
+    response model's defaults ("", None, False) — every one of which the UI
+    treats as "not present".
+    """
+    selected_score = next(
+        (
+            score
+            for score in job_match.profile_scores
+            if score.profile_id == job_match.selected_profile_id
+        ),
+        None,
+    )
+
     return JobMatchResponse(
         job_match_id=job_match.id,
         selected_profile_id=job_match.selected_profile_id,
@@ -57,6 +88,11 @@ def _job_match_response(job_match: JobMatch) -> JobMatchResponse:
         missing_skills=job_match.missing_skills,
         recommendation=job_match.recommendation,
         profile_scores=job_match.profile_scores,
+        reasoning=selected_score.reasoning if selected_score else "",
+        hard_blocker=selected_score.hard_blocker if selected_score else None,
+        insufficient_detail=(
+            selected_score.insufficient_detail if selected_score else False
+        ),
         matched_at=job_match.matched_at,
     )
 

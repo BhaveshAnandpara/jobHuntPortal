@@ -50,6 +50,7 @@ import { Button, Card, EmptyState, ErrorState, PageHeader, Skeleton } from '../.
 import { useApplications } from '../../api/tracking'
 import { pollAlways } from '../../hooks/usePolling'
 import { toApiError } from '../../api/client'
+import { LlmConfigRequiredEmptyState } from '../gating/LlmConfigRequired'
 import { JobUrlSubmitForm } from './JobUrlSubmitForm'
 import { OpportunityTable } from './OpportunityTable'
 import { StatusFilterTabs, tabId, type StatusTabCounts } from './StatusFilterTabs'
@@ -82,7 +83,7 @@ export function OpportunitiesPage() {
   const applications = useApplications(undefined, {
     refetchInterval: pollAlways(5000),
   })
-  const { isBlockedOnMissingResume } = useJobSubmissionReadiness()
+  const { blocker } = useJobSubmissionReadiness()
 
   const applicationList = useMemo(() => applications.data ?? [], [applications.data])
 
@@ -168,7 +169,7 @@ export function OpportunitiesPage() {
         // Empty state #1 — the account has nothing in the pipeline at all.
         // No filter is involved, so there is no filter to clear; the only
         // useful next step is the primary action itself.
-        isBlockedOnMissingResume ? (
+        blocker === 'missing-resume' ? (
           <EmptyState
             icon={<FileText className="h-8 w-8" aria-hidden />}
             title="Add a resume to get started"
@@ -179,6 +180,11 @@ export function OpportunitiesPage() {
               </Link>
             }
           />
+        ) : blocker === 'missing-llm-config' ? (
+          // The other hard gate on submission, in the same slot and the same
+          // pattern — only ever one of the two shows, see
+          // `jobSubmissionReadiness.ts`.
+          <LlmConfigRequiredEmptyState description="Submitting a job runs it through your own AI provider, so a working key is needed before opportunities can be added." />
         ) : (
           <EmptyState
             icon={<Briefcase className="h-8 w-8" aria-hidden />}

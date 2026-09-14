@@ -119,6 +119,15 @@ class ApplicationStatus(str, Enum):
     """Owner: Tracking Service. See state-machines.md#opportunity-lifecycle-applicationstatus--applicationstatus.
 
     Terminal states: OFFER, REJECTED, IGNORED, WITHDRAWN.
+
+    `BLOCKED_LLM_NOT_CONFIGURED` is the one status that is not a stage of
+    the lifecycle chain but a *pause* on it: the pipeline stopped because
+    the user has no usable AI provider key, not because the opportunity
+    progressed or failed on its merits. It is deliberately non-terminal —
+    the user fixing their key in Settings and the opportunity being
+    reprocessed moves the row forward again (see
+    `tracking.consumers._STATUS_RANK`, where it ranks just above
+    DISCOVERED so any genuine later event resumes normal progress).
     """
 
     DISCOVERED = "DISCOVERED"
@@ -136,6 +145,7 @@ class ApplicationStatus(str, Enum):
     REJECTED = "REJECTED"
     IGNORED = "IGNORED"
     WITHDRAWN = "WITHDRAWN"
+    BLOCKED_LLM_NOT_CONFIGURED = "BLOCKED_LLM_NOT_CONFIGURED"
 
 
 class RemoteWorkPreference(str, Enum):

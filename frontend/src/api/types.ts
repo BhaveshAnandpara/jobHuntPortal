@@ -18,6 +18,11 @@ export type CreateUserRequest = Schemas['CreateUserRequest']
 export type UserResponse = Schemas['UserResponse']
 export type UserPreferencesResponse = Schemas['UserPreferencesResponse']
 export type UpdateUserPreferencesRequest = Schemas['UpdateUserPreferencesRequest']
+export type UserLlmConfigResponse = Schemas['UserLlmConfigResponse']
+export type UpdateUserLlmConfigRequest = Schemas['UpdateUserLlmConfigRequest']
+/** The four user-selectable AI providers — Ollama is deliberately absent,
+ * see docs/llm-provider-config/PRODUCT.md. */
+export type LlmProviderName = Schemas['LlmProviderName']
 
 // Auth (User Service) — see api/auth.ts
 export type LoginRequest = Schemas['LoginRequest']
@@ -49,6 +54,10 @@ export type TriggerContactSearchResponse = Schemas['TriggerContactSearchResponse
 export type OutreachResponse = Schemas['OutreachResponse']
 export type ApproveOutreachRequest = Schemas['ApproveOutreachRequest']
 export type EditOutreachRequest = Schemas['EditOutreachRequest']
+
+// Resume Tailoring Service — see docs/tailored-resume/TECH.md
+export type TailoringResponse = Schemas['TailoringResponse']
+export type TailoredResumeSummary = Schemas['TailoredResumeSummary']
 
 // Tracking Service
 export type ApplicationResponse = Schemas['ApplicationResponse']

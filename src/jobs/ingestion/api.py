@@ -55,7 +55,54 @@ _STATUS_BY_ERROR_CODE = {
     ErrorCode.INVALID_JOB_URL: status.HTTP_400_BAD_REQUEST,
     ErrorCode.JOB_FETCH_FAILED: status.HTTP_400_BAD_REQUEST,
     ErrorCode.LLM_PROVIDER_ERROR: status.HTTP_400_BAD_REQUEST,
+    ErrorCode.LLM_NOT_CONFIGURED: status.HTTP_400_BAD_REQUEST,
 }
+
+LLM_NOT_CONFIGURED_MESSAGE = "Add your AI provider key in Settings to use this feature."
+"""Rendered verbatim by the frontend — keep it a complete, actionable sentence."""
+
+
+async def require_llm_configured(user_id: CurrentUserIdDependency) -> None:
+    """Reject the request unless the caller has a validated LLM config.
+
+    Declared as a route-level `dependencies=[...]` entry, which FastAPI
+    inserts at the front of the dependency list and solves in order, so this
+    runs before `get_structured_extractor`, before the posting page is
+    fetched, before any `jobs` row is written, and before `jobs.discovered`
+    is produced — "blocked immediately, never discovered deep inside a
+    pipeline" (docs/llm-provider-config/PRODUCT.md).
+
+    It also gives `get_structured_extractor`'s bare `LlmNotConfiguredError`
+    this service's normalized `{"code","message"}` body: that dependency
+    deliberately raises without inventing an error contract of its own (see
+    its docstring), and an unhandled exception out of a dependency would
+    otherwise surface as a 500.
+
+    `get_user_llm_client` is the sanctioned seam for asking the question —
+    the `user_llm_config` row is User Service's private state and the
+    architecture audit forbids importing `users.repository` here. Resolving
+    it twice on the success path (once here, once in
+    `get_structured_extractor`) costs one extra indexed row read and a local
+    decrypt; no provider connection is opened until `.complete()`.
+    """
+    # Imported lazily so mounting this router still requires no configured
+    # LLM — the same rule jobs/ingestion/dependencies.py follows.
+    from infrastructure.llm import LlmNotConfiguredError, get_user_llm_client
+
+    try:
+        await get_user_llm_client(user_id)
+    except LlmNotConfiguredError as error:
+        logger.info(
+            "Job ingestion blocked: no validated LLM configuration | %s",
+            format_context(user_id=user_id),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": ErrorCode.LLM_NOT_CONFIGURED.value,
+                "message": LLM_NOT_CONFIGURED_MESSAGE,
+            },
+        ) from error
 
 
 def _http_error(error: JobIngestionError) -> HTTPException:
@@ -85,6 +132,7 @@ def _job_response(job: Job) -> JobResponse:
     "/jobs/ingest-url",
     response_model=JobResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_llm_configured)],
 )
 async def ingest_job_url_route(
     request: IngestJobUrlRequest,
@@ -153,4 +201,4 @@ async def get_job_route(
     return _job_response(job)
 
 
-__all__ = ["router"]
+__all__ = ["LLM_NOT_CONFIGURED_MESSAGE", "require_llm_configured", "router"]

@@ -4,6 +4,31 @@
  */
 
 export interface paths {
+    "/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Health
+         * @description Probe both runtime dependencies and report them together.
+         *
+         *     Neither check raises: `check_connection_async` normalizes every
+         *     `SQLAlchemyError` to `False` and the Kafka check normalizes any broker
+         *     exception the same way, so a down dependency becomes a 503 with a
+         *     truthful body rather than a 500.
+         */
+        get: operations["get_health_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users": {
         parameters: {
             query?: never;
@@ -32,6 +57,39 @@ export interface paths {
         get: operations["get_preferences_users_me_preferences_get"];
         /** Replace Preferences */
         put: operations["replace_preferences_users_me_preferences_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/me/llm-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Llm Config
+         * @description Return the caller's saved AI provider configuration.
+         *
+         *     404 when nothing is configured — the same "unset is not an error"
+         *     convention as `GET /users/me/preferences`, which the frontend already
+         *     handles.
+         */
+        get: operations["get_llm_config_users_me_llm_config_get"];
+        /**
+         * Replace Llm Config
+         * @description Validate the submitted key live, then replace the stored config.
+         *
+         *     Returns 200 with the same masked shape `GET` returns — never the key
+         *     that was just submitted. A key the provider rejects comes back as
+         *     `400 VALIDATION_ERROR` and persists nothing, so a failed save leaves any
+         *     previously-working configuration intact.
+         */
+        put: operations["replace_llm_config_users_me_llm_config_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -415,6 +473,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/jobs/{job_id}/tailored-resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Tailored Resume
+         * @description Metadata for this job's tailored resume, or 404 if none exists.
+         *
+         *     Not gated on LLM configuration — this reads existing state and spends
+         *     no quota. A job belonging to another user is indistinguishable from a
+         *     job with no tailored resume (`get_for_job` is scoped by `user_id`),
+         *     which is the same non-disclosure rule `TailoringError` documents.
+         */
+        get: operations["get_tailored_resume_jobs__job_id__tailored_resume_get"];
+        put?: never;
+        /**
+         * Generate Tailored Resume
+         * @description Generate a tailored resume for this job, if one would be better.
+         *
+         *     Returns 201 with the new record's id when the tailored content cleared
+         *     the 5-point gate, and 200 with `improved: false` when it did not —
+         *     which is a legitimate answer, not an error, so nothing is persisted and
+         *     no error body is returned.
+         */
+        post: operations["generate_tailored_resume_jobs__job_id__tailored_resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/tailored-resume/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Tailored Resume
+         * @description Download this job's tailored resume as a `.docx` attachment.
+         *
+         *     The file arrives named for the application it belongs to —
+         *     `Aoife_Devlin_Riverside_General_Hospital_ICU_Staff_Nurse_Resume.docx` —
+         *     because a download folder full of `tailored-resume-<uuid>.docx` is
+         *     unusable the moment a user has applied to more than one job. The name is
+         *     resolved at download time rather than stored, so renaming a job or
+         *     correcting a name on the profile is reflected the next time the document
+         *     is fetched, with no migration and no stale copy.
+         */
+        get: operations["download_tailored_resume_jobs__job_id__tailored_resume_download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -504,13 +624,56 @@ export interface components {
          * @description Owner: Tracking Service. See state-machines.md#opportunity-lifecycle-applicationstatus--applicationstatus.
          *
          *     Terminal states: OFFER, REJECTED, IGNORED, WITHDRAWN.
+         *
+         *     `BLOCKED_LLM_NOT_CONFIGURED` is the one status that is not a stage of
+         *     the lifecycle chain but a *pause* on it: the pipeline stopped because
+         *     the user has no usable AI provider key, not because the opportunity
+         *     progressed or failed on its merits. It is deliberately non-terminal —
+         *     the user fixing their key in Settings and the opportunity being
+         *     reprocessed moves the row forward again (see
+         *     `tracking.consumers._STATUS_RANK`, where it ranks just above
+         *     DISCOVERED so any genuine later event resumes normal progress).
          * @enum {string}
          */
-        ApplicationStatus: "DISCOVERED" | "MATCHED" | "SHORTLISTED" | "CONTACT_SEARCH" | "CONTACT_FOUND" | "OUTREACH_GENERATED" | "OUTREACH_APPROVED" | "OUTREACH_SENT" | "REFERRED" | "APPLIED" | "INTERVIEW" | "OFFER" | "REJECTED" | "IGNORED" | "WITHDRAWN";
+        ApplicationStatus: "DISCOVERED" | "MATCHED" | "SHORTLISTED" | "CONTACT_SEARCH" | "CONTACT_FOUND" | "OUTREACH_GENERATED" | "OUTREACH_APPROVED" | "OUTREACH_SENT" | "REFERRED" | "APPLIED" | "INTERVIEW" | "OFFER" | "REJECTED" | "IGNORED" | "WITHDRAWN" | "BLOCKED_LLM_NOT_CONFIGURED";
         /** ApproveOutreachRequest */
         ApproveOutreachRequest: {
             /** Final Message */
             final_message?: string | null;
+        };
+        /**
+         * ContactInfo
+         * @description A candidate's own contact details, as literally stated on their
+         *     resume. Every field is optional: a resume that never states a phone
+         *     number must yield `phone=None`, never an invented one — and a resume
+         *     with no discoverable contact details at all yields no `ContactInfo` at
+         *     all (the owning field is `ContactInfo | None`).
+         *
+         *     Lives here next to `EducationEntry` — like it, this shape is carried
+         *     by both `CandidateProfile` (domain) and `ResumeProfile` (DTO), and
+         *     `shared.types.domain` imports from this module rather than the other
+         *     way around.
+         */
+        ContactInfo: {
+            /** Full Name */
+            full_name?: string | null;
+            /** Email */
+            email?: string | null;
+            /** Phone */
+            phone?: string | null;
+            /** Location */
+            location?: string | null;
+            /** Linkedin Url */
+            linkedin_url?: string | null;
+            /** Github Url */
+            github_url?: string | null;
+            /** Portfolio Url */
+            portfolio_url?: string | null;
+            /**
+             * Links Checked
+             * @default false
+             */
+            links_checked: boolean;
         };
         /** ContactResponse */
         ContactResponse: {
@@ -609,6 +772,15 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HealthResponse */
+        HealthResponse: {
+            /** Status */
+            status: string;
+            /** Database */
+            database: boolean;
+            /** Kafka */
+            kafka: boolean;
+        };
         /** IngestJobUrlRequest */
         IngestJobUrlRequest: {
             /** Url */
@@ -649,6 +821,18 @@ export interface components {
              * @default []
              */
             profile_scores: components["schemas"]["ProfileMatchScore"][];
+            /**
+             * Reasoning
+             * @default
+             */
+            reasoning: string;
+            /** Hard Blocker */
+            hard_blocker?: string | null;
+            /**
+             * Insufficient Detail
+             * @default false
+             */
+            insufficient_detail: boolean;
             /**
              * Matched At
              * Format: date-time
@@ -727,6 +911,23 @@ export interface components {
          * @enum {string}
          */
         JobSourceType: "MANUAL_URL" | "LINKEDIN" | "INDEED" | "COMPANY_CAREERS_PAGE" | "OTHER";
+        /**
+         * LlmProviderName
+         * @description The four user-selectable providers.
+         *
+         *     Values match the `provider` strings `infrastructure.llm.config.LLMConfig`
+         *     already understands (`groq`, `gemini`), so a stored row maps onto an
+         *     `LLMConfig` without a translation table.
+         *
+         *     Ollama is deliberately absent — it needs a locally-running model server,
+         *     which is meaningless for a user of a hosted deployment (see
+         *     docs/llm-provider-config/PRODUCT.md).
+         *
+         *     Named `LlmProviderName`, not `LLMProvider`, to stay distinct from the
+         *     `LLMProvider` *protocol* in `infrastructure/llm/provider.py`.
+         * @enum {string}
+         */
+        LlmProviderName: "claude" | "openai" | "groq" | "gemini";
         /** LoginRequest */
         LoginRequest: {
             /** Email */
@@ -796,7 +997,19 @@ export interface components {
          * @enum {string}
          */
         OutreachStatus: "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "EDITED" | "SENT" | "SEND_FAILED";
-        /** ProfileMatchScore */
+        /**
+         * ProfileMatchScore
+         * @description One profile's score against one job.
+         *
+         *     `reasoning`, `hard_blocker` and `insufficient_detail` are additive,
+         *     default-bearing explanation fields (shared-types.md's additive-only
+         *     versioning rule). They are persisted inside the `job_matches.
+         *     profile_scores` JSON column, so rows written before they existed simply
+         *     lack the keys and the defaults below apply on read — no migration.
+         *     None of the three participates in `score`, `matched_skills` or
+         *     `missing_skills`; they only explain a score that was computed exactly
+         *     as it was before.
+         */
         ProfileMatchScore: {
             /**
              * Profile Id
@@ -820,6 +1033,18 @@ export interface components {
              * @default []
              */
             missing_skills: string[];
+            /**
+             * Reasoning
+             * @default
+             */
+            reasoning: string;
+            /** Hard Blocker */
+            hard_blocker?: string | null;
+            /**
+             * Insufficient Detail
+             * @default false
+             */
+            insufficient_detail: boolean;
         };
         /**
          * ProfileStatus
@@ -865,6 +1090,7 @@ export interface components {
             title: string;
             /** Summary */
             summary?: string | null;
+            contact?: components["schemas"]["ContactInfo"] | null;
             /**
              * Skills
              * @default []
@@ -879,6 +1105,11 @@ export interface components {
              * @default []
              */
             education: components["schemas"]["EducationEntry"][];
+            /**
+             * Work History
+             * @default []
+             */
+            work_history: components["schemas"]["WorkExperienceEntry"][];
             /**
              * Certifications
              * @default []
@@ -929,6 +1160,72 @@ export interface components {
          */
         ResumeStatus: "UPLOADED" | "PARSING" | "PARSED" | "PARSE_FAILED" | "ARCHIVED";
         /**
+         * TailoredResumeSummary
+         * @description Metadata for an already-generated tailored resume.
+         *
+         *     Deliberately omits `storage_uri` (a server-side filesystem path) and
+         *     `user_id`/`source_resume_id` — the caller downloads by job, and the
+         *     route is already scoped to the caller's own identity.
+         */
+        TailoredResumeSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Base Score */
+            base_score: number;
+            /** Achieved Score */
+            achieved_score: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * TailoringResponse
+         * @description The outcome of one `POST /jobs/{job_id}/tailored-resume`.
+         *
+         *     Both outcomes are successes, distinguished by `improved` and by the
+         *     status code: 201 when a document was created (`id` set), 200 when the
+         *     attempt honestly found nothing worth creating (`message` set, and no
+         *     row or file persisted). `base_score`/`achieved_score` are always
+         *     present so the frontend can show the comparison either way.
+         */
+        TailoringResponse: {
+            /** Improved */
+            improved: boolean;
+            /** Base Score */
+            base_score: number;
+            /** Achieved Score */
+            achieved_score: number;
+            /** Id */
+            id?: string | null;
+            /** Message */
+            message?: string | null;
+            /**
+             * Base Matched Skills
+             * @default []
+             */
+            base_matched_skills: string[];
+            /**
+             * Base Missing Skills
+             * @default []
+             */
+            base_missing_skills: string[];
+            /**
+             * Tailored Matched Skills
+             * @default []
+             */
+            tailored_matched_skills: string[];
+            /**
+             * Tailored Missing Skills
+             * @default []
+             */
+            tailored_missing_skills: string[];
+        };
+        /**
          * TriggerContactSearchRequest
          * @description See this module's docstring — an additive gap-resolution type, not
          *     part of api-contracts.md's documented (path-param-only) input.
@@ -962,6 +1259,23 @@ export interface components {
             /** Notes */
             notes?: string | null;
         };
+        /**
+         * UpdateUserLlmConfigRequest
+         * @description Full-replace payload for `PUT /users/me/llm-config`, matching
+         *     `UpdateUserPreferencesRequest`'s full-replace semantics.
+         *
+         *     `api_key` is the one place a plaintext key travels in this system: it is
+         *     accepted here, validated against the live provider, encrypted, and
+         *     stored. It is never echoed back — the response is a
+         *     `UserLlmConfigResponse`.
+         */
+        UpdateUserLlmConfigRequest: {
+            provider: components["schemas"]["LlmProviderName"];
+            /** Model */
+            model?: string | null;
+            /** Api Key */
+            api_key: string;
+        };
         /** UpdateUserPreferencesRequest */
         UpdateUserPreferencesRequest: {
             /**
@@ -984,6 +1298,26 @@ export interface components {
             min_salary?: number | null;
             /** Salary Currency */
             salary_currency?: string | null;
+        };
+        /**
+         * UserLlmConfigResponse
+         * @description The user's saved AI provider configuration, as the frontend sees it.
+         *
+         *     Deliberately narrower than the `UserLlmConfig` domain type and *far*
+         *     narrower than the stored row: it carries `key_hint` (a masked tail such
+         *     as `...ab12`) and never the API key itself. The repository that builds
+         *     the domain object cannot hand a plaintext key to this layer at all (see
+         *     `users/repository.py::UserLlmConfigRepository.get`), so there is no code
+         *     path by which a usable key could reach a response body.
+         */
+        UserLlmConfigResponse: {
+            provider: components["schemas"]["LlmProviderName"];
+            /** Model */
+            model?: string | null;
+            /** Key Hint */
+            key_hint?: string | null;
+            /** Last Validated At */
+            last_validated_at?: string | null;
         };
         /** UserPreferencesResponse */
         UserPreferencesResponse: {
@@ -1053,6 +1387,31 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /**
+         * WorkExperienceEntry
+         * @description One employment entry from a resume, kept profession-independent:
+         *     `company`/`title` are free text, dates are free-text strings (resumes
+         *     write them as "Jan 2020", "2020-01", "Spring 2020", ...) rather than
+         *     parsed dates, and `bullets` are the entry's own achievement/
+         *     responsibility lines verbatim.
+         *
+         *     `end_date is None` means the role is current ("Present" on the resume).
+         */
+        WorkExperienceEntry: {
+            /** Company */
+            company: string;
+            /** Title */
+            title: string;
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
+            /**
+             * Bullets
+             * @default []
+             */
+            bullets: string[];
+        };
     };
     responses: never;
     parameters: never;
@@ -1062,6 +1421,35 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_health_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
     create_user_users_post: {
         parameters: {
             query?: never;
@@ -1135,6 +1523,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserPreferencesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_config_users_me_llm_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserLlmConfigResponse"];
+                };
+            };
+        };
+    };
+    replace_llm_config_users_me_llm_config_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateUserLlmConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserLlmConfigResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1806,6 +2247,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApplicationHistoryResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_tailored_resume_jobs__job_id__tailored_resume_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TailoredResumeSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_tailored_resume_jobs__job_id__tailored_resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TailoringResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_tailored_resume_jobs__job_id__tailored_resume_download_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

@@ -23,6 +23,25 @@ Typical usage from a domain component::
 A caller that needs a non-default provider or config injects it explicitly::
 
     client = LLMClient(provider=some_other_provider, config=my_config)
+
+Every user-facing AI action instead resolves the *calling user's* own
+provider and API key (docs/llm-provider-config/PRODUCT.md)::
+
+    from infrastructure.llm import LlmNotConfiguredError, get_user_llm_client
+
+    client = await get_user_llm_client(user_id)  # raises LlmNotConfiguredError
+
+A user may also append their own extra instructions to an individual
+skill's prompt (docs/prompt-customization/PRODUCT.md). Loading them and
+attaching them are both here, and attaching is only ever additive::
+
+    from infrastructure.llm import append_custom_instructions, get_skill_customization
+
+    extra = await get_skill_customization(user_id, SkillKey.RESUME_TAILORING)
+    prompt = append_custom_instructions(prompt, extra)  # last, quoted, subordinate
+
+See `infrastructure/llm/user_prompts.py` for why that append point is a
+safety boundary rather than a formatting detail.
 """
 
 from __future__ import annotations
@@ -33,10 +52,19 @@ from infrastructure.llm.config import (
     LLMCallOptions,
     LLMConfig,
 )
-from infrastructure.llm.errors import LLMFailureReason, LLMProviderError
+from infrastructure.llm.errors import (
+    LLMFailureReason,
+    LlmNotConfiguredError,
+    LLMProviderError,
+)
 from infrastructure.llm.ollama_provider import OllamaProvider
 from infrastructure.llm.provider import LLMProvider, LLMRequest, LLMResponse
 from infrastructure.llm.structured import LLMClient
+from infrastructure.llm.user_client import get_user_llm_client
+from infrastructure.llm.user_prompts import (
+    append_custom_instructions,
+    get_skill_customization,
+)
 
 __all__ = [
     "DEFAULT_HOST",
@@ -49,5 +77,9 @@ __all__ = [
     "LLMProviderError",
     "LLMRequest",
     "LLMResponse",
+    "LlmNotConfiguredError",
     "OllamaProvider",
+    "append_custom_instructions",
+    "get_skill_customization",
+    "get_user_llm_client",
 ]

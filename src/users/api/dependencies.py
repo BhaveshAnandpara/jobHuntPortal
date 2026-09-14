@@ -6,7 +6,12 @@ from typing import Annotated
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from users.repository import UserPreferencesRepository, UserRepository
+from users.repository import (
+    SkillPromptRepository,
+    UserLlmConfigRepository,
+    UserPreferencesRepository,
+    UserRepository,
+)
 from users.service import UserService
 
 
@@ -28,6 +33,8 @@ def get_user_service(
     return UserService(
         users=UserRepository(session),
         preferences=UserPreferencesRepository(session),
+        llm_configs=UserLlmConfigRepository(session),
+        skill_prompts=SkillPromptRepository(session),
     )
 
 

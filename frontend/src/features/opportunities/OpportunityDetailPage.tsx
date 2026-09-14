@@ -90,6 +90,7 @@ import { OtherResumesEvaluated } from './OtherResumesEvaluated'
 import { LifecycleTimeline } from './LifecycleTimeline'
 import { StatusActionMenu } from './StatusActionMenu'
 import { OutreachSummaryPanel } from './OutreachSummaryPanel'
+import { TailoredResumePanel } from './TailoredResumePanel'
 
 export function OpportunityDetailPage() {
   const { applicationId } = useParams<{ applicationId: string }>()
@@ -201,6 +202,9 @@ export function OpportunityDetailPage() {
             application={application}
             isAvailable={shouldRenderStageData(matchAvailability)}
             recommendation={jobMatchQuery.data?.recommendation}
+            reasoning={jobMatchQuery.data?.reasoning}
+            hardBlocker={jobMatchQuery.data?.hard_blocker}
+            insufficientDetail={jobMatchQuery.data?.insufficient_detail}
             isRecommendationLoading={jobMatchQuery.isLoading}
             isRecommendationError={jobMatchQuery.isError}
             recommendationErrorMessage={
@@ -225,6 +229,17 @@ export function OpportunityDetailPage() {
             isError={jobMatchQuery.isError}
             errorMessage={jobMatchQuery.isError ? toApiError(jobMatchQuery.error).message : undefined}
             onRetry={() => jobMatchQuery.refetch()}
+          />
+
+          {/* Sits with the resume panels, not with the actions column: it is
+              about the same resume `MatchPanel` and `OtherResumesEvaluated`
+              just discussed, and shares their precondition (a `JobMatch`
+              must exist for there to be a baseline score to improve on), so
+              it reads as the next step in that conversation rather than a
+              standalone control. */}
+          <TailoredResumePanel
+            jobId={application.job_id}
+            isAvailable={shouldRenderStageData(matchAvailability)}
           />
 
           <ContactsPanel

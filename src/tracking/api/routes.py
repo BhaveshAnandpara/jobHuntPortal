@@ -117,6 +117,24 @@ _MANUAL_TRANSITIONS: dict[ApplicationStatus, frozenset[ApplicationStatus]] = {
             ApplicationStatus.WITHDRAWN,
         }
     ),
+    # BLOCKED_LLM_NOT_CONFIGURED: reachable only from
+    # `tracking.consumers.mark_blocked_llm_not_configured` (a pipeline
+    # component reporting that this user has no usable AI provider key),
+    # never from a manual PATCH — which is why it appears as a key with
+    # outgoing edges but in no other status's value set. Its outgoing
+    # edges are the same "skip ahead or give up" pair every mid-chain
+    # stage gets, plus IGNORED: a user who sees an opportunity paused on a
+    # key they don't intend to add should be able to dismiss it rather
+    # than only withdraw it. The normal recovery — fix the key, let the
+    # pipeline reprocess — needs no manual edge at all; it happens
+    # automatically via `tracking.consumers._STATUS_RANK`.
+    ApplicationStatus.BLOCKED_LLM_NOT_CONFIGURED: frozenset(
+        {
+            ApplicationStatus.APPLIED,
+            ApplicationStatus.WITHDRAWN,
+            ApplicationStatus.IGNORED,
+        }
+    ),
     # Terminal states: no outgoing edges — any PATCH out of these is
     # rejected below.
     ApplicationStatus.OFFER: frozenset(),
@@ -125,7 +143,7 @@ _MANUAL_TRANSITIONS: dict[ApplicationStatus, frozenset[ApplicationStatus]] = {
     ApplicationStatus.WITHDRAWN: frozenset(),
 }
 """Every status not present as a key here (CONTACT_SEARCH etc. are present;
-this covers all 15 ApplicationStatus members) would be a programming error
+this covers all 16 ApplicationStatus members) would be a programming error
 — all are listed explicitly for that reason rather than relying on
 `dict.get(..., frozenset())` to paper over a missing entry."""
 

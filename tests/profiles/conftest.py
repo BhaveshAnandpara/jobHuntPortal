@@ -20,6 +20,7 @@ from infrastructure.llm.provider import LLMRequest, LLMResponse
 from profiles.storage import LocalResumeStorage
 from shared.types.domain.candidate_profile import CandidateProfile
 from shared.types.domain.resume import Resume
+from shared.types.dto import ContactInfo, WorkExperienceEntry
 from shared.types.enums import ProfileStatus, ResumeStatus
 from shared.types.ids import ProfileId, ResumeId, UserId
 
@@ -209,6 +210,22 @@ class FakeCandidateProfileRepository:
     async def add(self, profile: CandidateProfile) -> CandidateProfile:
         self.by_id[profile.id] = profile
         return profile
+
+    async def set_contact_and_work_history(
+        self,
+        profile_id: ProfileId,
+        *,
+        contact: ContactInfo | None,
+        work_history: list[WorkExperienceEntry],
+    ) -> CandidateProfile | None:
+        profile = self.by_id.get(profile_id)
+        if profile is None:
+            return None
+        updated = profile.model_copy(
+            update={"contact": contact, "work_history": list(work_history)}
+        )
+        self.by_id[profile_id] = updated
+        return updated
 
     async def archive_for_resume(self, resume_id: ResumeId) -> CandidateProfile | None:
         profile = await self.get_by_resume(resume_id)

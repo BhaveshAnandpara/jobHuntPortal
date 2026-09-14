@@ -64,7 +64,7 @@ change when it's picked up.
 
 | Frontend action | Method | Endpoint | Request | Response | State affected |
 |---|---|---|---|---|---|
-| Get match for a job | GET | `/jobs/{job_id}/matches` | — | `JobMatchResponse` — **⚠ see gap below, no `profile_scores`** | `useQuery(['match', jobId])`, used only for `recommendation` and `job_match_id`; score/matched/missing skills should be read from the already-fetched `ApplicationResponse` instead of duplicating the call's purpose |
+| Get match for a job | GET | `/jobs/{job_id}/matches` | — | `JobMatchResponse` | `useQuery(['match', jobId])`, used only for `recommendation`, `job_match_id`, `reasoning`, `hard_blocker` and `insufficient_detail` (the latter three projected from the selected profile's `ProfileMatchScore` — see domain-model.md#jobmatch); score/matched/missing skills should be read from the already-fetched `ApplicationResponse` instead of duplicating the call's purpose |
 
 ## Contact Discovery Service — `src/api/contacts.ts`
 

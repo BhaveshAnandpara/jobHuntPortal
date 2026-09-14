@@ -31,6 +31,7 @@ from profiles.repository import (
 )
 from shared.types.domain.candidate_profile import CandidateProfile
 from shared.types.domain.resume import Resume
+from shared.types.dto import ContactInfo, WorkExperienceEntry
 from shared.types.enums import ProfileStatus, ResumeStatus
 from shared.types.ids import ProfileId, ResumeId, UserId
 from users.models import UserRecord  # noqa: F401 — registers the users FK target table
@@ -211,3 +212,91 @@ def test_to_resume_profile_is_a_pure_projection() -> None:
     assert result.skills == ["SQL", "Tableau"]
     assert result.target_roles == ["Data Analyst"]
     assert result.status == ProfileStatus.ACTIVE
+
+
+# ---------------------------------------------------------------------------
+# contact / work_history JSON columns (docs/tailored-resume/TECH.md Task 1)
+# ---------------------------------------------------------------------------
+
+_CONTACT = ContactInfo(
+    full_name="Priya Ramesh",
+    email="priya.ramesh@example.com",
+    phone="+91 98765 43210",
+    location="Chennai, Tamil Nadu, India",
+)
+
+_WORK_HISTORY = [
+    WorkExperienceEntry(
+        company="Sundara Logistics Pvt Ltd",
+        title="Regional Operations Manager",
+        start_date="March 2021",
+        end_date=None,  # current role
+        bullets=["Run three distribution centres.", "Cut dispatch turnaround by 39%."],
+    ),
+    WorkExperienceEntry(
+        company="Kaveri Freight Services",
+        title="Warehouse Supervisor",
+        start_date="June 2017",
+        end_date="February 2021",
+        bullets=["Owned inbound receiving for a 90,000 sq ft facility."],
+    ),
+]
+
+
+@pytest.mark.asyncio
+async def test_candidate_profile_contact_and_work_history_round_trip(
+    session: AsyncSession,
+) -> None:
+    resume_repo = ResumeRepository(session)
+    profile_repo = CandidateProfileRepository(session)
+
+    resume = _make_resume(status=ResumeStatus.PARSED)
+    await resume_repo.add(resume)
+    profile = _make_profile(resume, contact=_CONTACT, work_history=_WORK_HISTORY)
+    await profile_repo.add(profile)
+
+    session.expunge_all()  # force a real read back out of the JSON columns
+    fetched = await profile_repo.get(profile.id)
+
+    assert fetched is not None
+    assert fetched.contact == _CONTACT
+    assert fetched.work_history == _WORK_HISTORY
+    # end_date None (current role) must survive the JSON round trip as None,
+    # not as the string "None" or a missing key
+    assert fetched.work_history[0].end_date is None
+    assert _dump_naive(fetched) == _dump_naive(profile)
+
+
+@pytest.mark.asyncio
+async def test_candidate_profile_without_contact_round_trips_as_none(
+    session: AsyncSession,
+) -> None:
+    """A profile from a resume with no discoverable contact details stores
+    NULL and reads back as `None` — never an empty `ContactInfo`, which
+    would falsely read as "we have contact details, they're all blank"."""
+    resume_repo = ResumeRepository(session)
+    profile_repo = CandidateProfileRepository(session)
+
+    resume = _make_resume(status=ResumeStatus.PARSED)
+    await resume_repo.add(resume)
+    profile = _make_profile(resume)  # no contact, no work history
+    await profile_repo.add(profile)
+
+    session.expunge_all()
+    fetched = await profile_repo.get(profile.id)
+
+    assert fetched is not None
+    assert fetched.contact is None
+    assert fetched.work_history == []
+
+
+def test_to_resume_profile_carries_contact_and_work_history() -> None:
+    """Job Matching consumes `ResumeProfile`, so the projection must carry
+    the new fields too — the two shapes stay field-for-field in sync."""
+    resume = _make_resume()
+    profile = _make_profile(resume, contact=_CONTACT, work_history=_WORK_HISTORY)
+
+    result = to_resume_profile(profile)
+
+    assert result.contact == _CONTACT
+    assert result.work_history == _WORK_HISTORY

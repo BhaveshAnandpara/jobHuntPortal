@@ -14,6 +14,7 @@ from fastapi import Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from infrastructure.auth import CurrentUserIdDependency
 from infrastructure.kafka.producer import EventProducer
 from jobs.ingestion.extraction import PageFetcher, StructuredExtractor
 from jobs.repository import JobRepository
@@ -77,11 +78,13 @@ class _LLMClientExtractor:
     of its own. `LLMClient` already owns retries, structured-output repair
     prompting, and error normalization (`infrastructure.llm.structured`).
 
-    Uses `LLMConfig.model`'s process-wide default (one model, set once via
-    env) rather than a per-call override — a prior per-call
-    `LLMCallOptions.model` pin to a specific Ollama model name broke once
-    the configured provider switched to Gemini, since that name isn't a
-    valid Gemini model.
+    Uses the model already resolved on the injected client's `LLMConfig`
+    (now the calling user's own provider/model — see
+    `get_structured_extractor`) rather than a per-call override: a prior
+    per-call `LLMCallOptions.model` pin to a specific Ollama model name
+    broke once the configured provider switched to Gemini, since that name
+    isn't a valid Gemini model, and pinning one vendor's model name is even
+    less safe now that the provider varies per user.
     """
 
     def __init__(self, client: "LLMClient") -> None:
@@ -91,10 +94,26 @@ class _LLMClientExtractor:
         return self._client.complete_structured(prompt, schema)
 
 
-def get_structured_extractor() -> StructuredExtractor:
-    from infrastructure.llm.structured import LLMClient
+async def get_structured_extractor(user_id: CurrentUserIdDependency) -> StructuredExtractor:
+    """Build the extractor on the *calling user's* own LLM credentials.
 
-    return _LLMClientExtractor(LLMClient())
+    `user_id` comes from the same JWT `POST /jobs/ingest-url` already
+    resolves (`infrastructure.auth.CurrentUserIdDependency`) — FastAPI
+    resolves nested `Depends(...)` chains, so declaring it here needs no
+    change to `jobs/ingestion/api.py` and adds no new authentication to any
+    route (`GET /jobs/{job_id}`, the only other route on this router, does
+    not depend on this function).
+
+    Raises `LlmNotConfiguredError` when the user has no validated
+    configuration. Turning that into this service's normalized 4xx body is
+    the gating task's job (docs/llm-provider-config/TECH.md Task 7), which
+    checks for a validated config before any ingestion work starts — this
+    dependency deliberately does not invent its own error contract.
+    """
+    # Imported lazily — see module docstring.
+    from infrastructure.llm.user_client import get_user_llm_client
+
+    return _LLMClientExtractor(await get_user_llm_client(user_id))
 
 
 __all__ = [

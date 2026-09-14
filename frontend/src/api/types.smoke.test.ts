@@ -44,8 +44,14 @@ describe('generated API types', () => {
           score: 0.9,
           matched_skills: [],
           missing_skills: [],
+          reasoning: 'Strong overlap on the core responsibilities.',
+          hard_blocker: null,
+          insufficient_detail: false,
         },
       ],
+      reasoning: 'Strong overlap on the core responsibilities.',
+      hard_blocker: null,
+      insufficient_detail: false,
       matched_at: '2026-01-01T00:00:00Z',
     }
 

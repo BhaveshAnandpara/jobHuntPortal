@@ -153,6 +153,7 @@ from infrastructure.kafka.consumer import (
     propagate_correlation_id,
 )
 from infrastructure.logging import format_context, get_logger
+from shared.contracts.opportunity_blocked import OpportunityBlockedReason
 from shared.events.envelope import EventEnvelope
 from shared.events.payloads import OutreachDecision, OutreachSentConfirmation
 from shared.types.domain.application import Application
@@ -189,6 +190,15 @@ logger = get_logger(__name__)
 
 _STATUS_RANK: dict[ApplicationStatus, int] = {
     ApplicationStatus.DISCOVERED: 0,
+    # BLOCKED_LLM_NOT_CONFIGURED is a pause on the chain, not a stage of
+    # it (see the enum's own docstring and mark_blocked_llm_not_configured
+    # below). Rank 5 — above DISCOVERED, below everything else — is what
+    # makes recovery automatic: it is never itself reached by the
+    # forward-progress rule (only by the dedicated function below, which
+    # bypasses rank deliberately), and any genuine pipeline event that
+    # arrives after the user fixes their key outranks it, so the row
+    # resumes normal progress instead of being stuck "blocked" forever.
+    ApplicationStatus.BLOCKED_LLM_NOT_CONFIGURED: 5,
     ApplicationStatus.MATCHED: 10,
     ApplicationStatus.IGNORED: 10,
     ApplicationStatus.SHORTLISTED: 20,
@@ -351,6 +361,171 @@ async def _advance(
         new_status=target_status,
         changed_at=now,
         triggered_by=triggered_by,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Blocked-opportunity reporter (docs/llm-provider-config/TECH.md Task 8) —
+# this service's implementation of `shared.contracts.opportunity_blocked`,
+# and the one status it writes on another component's report rather than on
+# an event it consumed.
+# ---------------------------------------------------------------------------
+
+BLOCKED_LLM_NOTE = (
+    "Paused: add or fix your AI provider key in Settings to continue "
+    "processing this opportunity."
+)
+"""User-facing `Application.notes` text written alongside
+`ApplicationStatus.BLOCKED_LLM_NOT_CONFIGURED`. Deliberately free of
+provider names and of any hint of the stored key itself."""
+
+_STATUS_FOR_BLOCKED_REASON: dict[OpportunityBlockedReason, ApplicationStatus] = {
+    OpportunityBlockedReason.LLM_NOT_CONFIGURED: (
+        ApplicationStatus.BLOCKED_LLM_NOT_CONFIGURED
+    ),
+}
+"""The port's reason vocabulary mapped onto this service's own lifecycle
+states. Tracking Service owns this mapping — the reporting component says
+only *why* it stopped, never what status to write."""
+
+_NOTE_FOR_BLOCKED_REASON: dict[OpportunityBlockedReason, str] = {
+    OpportunityBlockedReason.LLM_NOT_CONFIGURED: BLOCKED_LLM_NOTE,
+}
+
+
+async def record_opportunity_blocked(
+    *,
+    job_id: JobId,
+    user_id: UserId,
+    reason: OpportunityBlockedReason,
+    reported_by: str,
+    correlation_id: CorrelationId | None = None,
+    source_event_type: EventType | None = None,
+    company: str | None = None,
+    title: str | None = None,
+) -> None:
+    """Record that one opportunity is paused waiting on the user.
+
+    This is Tracking Service's implementation of
+    `shared.contracts.opportunity_blocked.OpportunityBlockedReporter`; read
+    that module's docstring first — it explains why a pipeline component
+    reports through an abstraction in `shared/` instead of importing this
+    module, calling `/applications`, or minting a new Kafka topic (all three
+    are forbidden and test-enforced), and who wires the two sides together.
+
+    `Application` stays "modifiable by Tracking Service only"
+    (`shared/types/domain/application.py`): the reporting component supplies
+    an observation and a `reason`; every decision about what that means for
+    the lifecycle row, and every write, happens here.
+
+    Idempotent and non-regressive, following the same rules `_advance`
+    applies to consumed events:
+
+    - no row yet (out-of-order arrival) -> create it already blocked, with
+      one `from_status=None` history entry
+    - row already blocked -> no-op (a redelivered message must not append a
+      second history row)
+    - row in a terminal status -> no-op, exactly as `_advance` guards
+    - otherwise -> transition to `BLOCKED_LLM_NOT_CONFIGURED` from whatever
+      stage it had reached, recorded in `application_history` like any
+      other transition
+
+    Note the deliberate difference from `_advance`: this transition
+    *bypasses* the `_STATUS_RANK` forward-progress check, because blocking
+    is by definition not forward progress. Recovery still rides on that
+    rank table — see `_STATUS_RANK`'s comment for
+    `BLOCKED_LLM_NOT_CONFIGURED`.
+    """
+    target = _STATUS_FOR_BLOCKED_REASON[reason]
+    note = _NOTE_FOR_BLOCKED_REASON[reason]
+
+    async with tracking_session_scope() as session:
+        app_repo = ApplicationRepository(session)
+        history_repo = ApplicationHistoryRepository(session)
+
+        application = await app_repo.get_for_job(job_id)
+        now = datetime.now(UTC)
+
+        if application is None:
+            application = Application(
+                id=ApplicationId(uuid4()),
+                job_id=job_id,
+                user_id=user_id,
+                company=company or "",
+                title=title or "",
+                status=target,
+                notes=note,
+                created_at=now,
+                updated_at=now,
+            )
+            await app_repo.add(application)
+            await history_repo.add(
+                ApplicationHistory(
+                    id=ApplicationHistoryId(uuid4()),
+                    application_id=application.id,
+                    from_status=None,
+                    to_status=target,
+                    changed_at=now,
+                    triggered_by=reported_by,
+                    source_event_type=source_event_type,
+                    correlation_id=correlation_id,
+                )
+            )
+            previous_status = None
+        elif application.status == target or application.status in _TERMINAL_STATUSES:
+            logger.info(
+                "Blocked-opportunity report ignored (already blocked or terminal) | %s",
+                format_context(
+                    application_id=application.id,
+                    current_status=application.status.value,
+                    reason=reason.value,
+                    correlation_id=correlation_id,
+                ),
+            )
+            return
+        else:
+            previous_status = application.status
+            application.status = target
+            application.notes = note
+            application.updated_at = now
+            await app_repo.update(application)
+            await history_repo.add(
+                ApplicationHistory(
+                    id=ApplicationHistoryId(uuid4()),
+                    application_id=application.id,
+                    from_status=previous_status,
+                    to_status=target,
+                    changed_at=now,
+                    triggered_by=reported_by,
+                    source_event_type=source_event_type,
+                    correlation_id=correlation_id,
+                )
+            )
+
+    logger.warning(
+        "Application blocked | %s",
+        format_context(
+            application_id=application.id,
+            job_id=job_id,
+            user_id=user_id,
+            from_status=previous_status.value if previous_status else None,
+            to_status=target.value,
+            reason=reason.value,
+            triggered_by=reported_by,
+            correlation_id=correlation_id,
+        ),
+    )
+    await publish_application_updated(
+        ApplicationStatusUpdate(
+            application_id=application.id,
+            job_id=job_id,
+            user_id=user_id,
+            previous_status=previous_status,
+            new_status=target,
+            changed_at=application.updated_at,
+            triggered_by=reported_by,
+        ),
+        correlation_id=correlation_id,
     )
 
 
@@ -619,6 +794,7 @@ def handle_outreach_sent(envelope: EventEnvelope[OutreachSentConfirmation]) -> N
 
 
 __all__ = [
+    "BLOCKED_LLM_NOTE",
     "handle_contacts_found",
     "handle_job_discovered",
     "handle_job_matched",
@@ -626,4 +802,5 @@ __all__ = [
     "handle_outreach_approved",
     "handle_outreach_generated",
     "handle_outreach_sent",
+    "record_opportunity_blocked",
 ]

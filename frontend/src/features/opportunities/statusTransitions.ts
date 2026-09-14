@@ -23,6 +23,8 @@
  * - APPLIED may advance to INTERVIEW, or REJECTED directly (no interview).
  * - INTERVIEW may resolve to OFFER or REJECTED.
  * - Any non-terminal status may move to WITHDRAWN.
+ * - BLOCKED_LLM_NOT_CONFIGURED (the AI-key pause) may go to APPLIED,
+ *   IGNORED or WITHDRAWN, and is never a manual *destination*.
  * - OFFER/REJECTED/IGNORED/WITHDRAWN are terminal — no further transitions.
  */
 
@@ -40,6 +42,12 @@ const MANUAL_TRANSITIONS: Record<ApplicationStatus, ApplicationStatus[]> = {
   REFERRED: ['APPLIED', 'WITHDRAWN'],
   APPLIED: ['INTERVIEW', 'REJECTED', 'WITHDRAWN'],
   INTERVIEW: ['OFFER', 'REJECTED', 'WITHDRAWN'],
+  // Mirrors the backend's `_MANUAL_TRANSITIONS` entry for the AI-key pause
+  // (src/tracking/api/routes.py): a user who doesn't intend to add a key can
+  // apply anyway, dismiss, or withdraw. There is deliberately no manual edge
+  // *back* into the chain — fixing the key in Settings resumes the pipeline
+  // on its own.
+  BLOCKED_LLM_NOT_CONFIGURED: ['APPLIED', 'IGNORED', 'WITHDRAWN'],
   OFFER: [],
   REJECTED: [],
   IGNORED: [],

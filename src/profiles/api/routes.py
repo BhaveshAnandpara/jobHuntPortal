@@ -16,6 +16,7 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
 from infrastructure.auth import CurrentUserIdDependency
+from infrastructure.llm import LlmNotConfiguredError, get_user_llm_client
 from profiles.api.dependencies import get_profile_service
 from profiles.service import ProfileError, ProfileService
 from shared.errors.codes import ErrorCode
@@ -31,6 +32,7 @@ ProfileServiceDep = Annotated[ProfileService, Depends(get_profile_service)]
 _STATUS_BY_ERROR_CODE = {
     ErrorCode.VALIDATION_ERROR: status.HTTP_400_BAD_REQUEST,
     ErrorCode.NOT_FOUND: status.HTTP_404_NOT_FOUND,
+    ErrorCode.LLM_NOT_CONFIGURED: status.HTTP_400_BAD_REQUEST,
 }
 
 
@@ -39,6 +41,41 @@ def _http_error(error: ProfileError) -> HTTPException:
         status_code=_STATUS_BY_ERROR_CODE[error.code],
         detail={"code": error.code.value, "message": error.message},
     )
+
+
+LLM_NOT_CONFIGURED_MESSAGE = "Add your AI provider key in Settings to use this feature."
+"""Rendered verbatim by the frontend — keep it a complete, actionable sentence."""
+
+
+async def require_llm_configured(user_id: CurrentUserIdDependency) -> None:
+    """Reject the request unless the caller has a validated LLM config.
+
+    Declared as a route-level `dependencies=[...]` entry rather than checked
+    inside the handler, because FastAPI inserts those at the front of the
+    dependency list and solves them in order: the gate therefore runs before
+    `get_profile_service` resolves a session, before any file is written to
+    storage, and before any `profiles.*` event is produced — which is the
+    whole point of "blocked immediately, never discovered deep inside a
+    pipeline" (docs/llm-provider-config/PRODUCT.md).
+
+    `get_user_llm_client` is the sanctioned seam for asking this question:
+    the `user_llm_config` row (exists *and* `last_validated_at is not None`)
+    is User Service's private state, and the architecture audit forbids this
+    component from importing `users.repository` to read it directly. The
+    call costs one indexed row read and a local decrypt — no network call is
+    made, since every provider in this layer connects only inside
+    `.complete()`.
+    """
+    try:
+        await get_user_llm_client(user_id)
+    except LlmNotConfiguredError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": ErrorCode.LLM_NOT_CONFIGURED.value,
+                "message": LLM_NOT_CONFIGURED_MESSAGE,
+            },
+        ) from error
 
 
 def _resume_response(resume: Resume) -> ResumeResponse:
@@ -51,7 +88,12 @@ def _resume_response(resume: Resume) -> ResumeResponse:
     )
 
 
-@router.post("/resumes", response_model=ResumeResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/resumes",
+    response_model=ResumeResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_llm_configured)],
+)
 async def upload_resume(
     request: CreateResumeRequest,
     user_id: CurrentUserIdDependency,
@@ -112,4 +154,4 @@ async def get_profile(
         raise _http_error(error) from error
 
 
-__all__ = ["router"]
+__all__ = ["LLM_NOT_CONFIGURED_MESSAGE", "require_llm_configured", "router"]

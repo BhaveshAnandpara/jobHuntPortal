@@ -39,6 +39,7 @@ function renderDashboard() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/opportunities" element={<div>Opportunities Page Stub</div>} />
             <Route path="/resumes" element={<div>Resumes Page Stub</div>} />
+            <Route path="/settings" element={<div>Settings Page Stub</div>} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -67,6 +68,22 @@ function applicationFixture(overrides: Record<string, unknown> = {}) {
 /** Zero ACTIVE profiles === no analyzed resume — see jobSubmissionReadiness.ts. */
 function withNoAnalyzedResume() {
   server.use(http.get(`${API_BASE_URL}/profiles`, () => HttpResponse.json([])))
+}
+
+/**
+ * No validated AI provider key. 404 is the backend's "unset is not an error"
+ * convention for this endpoint, the same one `GET /users/me/preferences`
+ * uses — see docs/llm-provider-config/TECH.md's Task 6.
+ */
+function withNoLlmConfig() {
+  server.use(
+    http.get(`${API_BASE_URL}/users/me/llm-config`, () =>
+      HttpResponse.json(
+        { detail: { code: 'NOT_FOUND', message: 'No AI provider configured.' } },
+        { status: 404 },
+      ),
+    ),
+  )
 }
 
 describe('DashboardPage', () => {
@@ -289,5 +306,58 @@ describe('DashboardPage', () => {
     expect(await screen.findByText('Outreach is unavailable right now.')).toBeInTheDocument()
     expect(await screen.findByText('Pipeline summary')).toBeInTheDocument()
     expect(screen.getByText('Recent opportunities')).toBeInTheDocument()
+  })
+
+  // --- Task 10 (docs/llm-provider-config/TECH.md): AI-provider-key gating ---
+
+  it('Task 10: replaces the submit form with a Settings CTA when no AI provider key is configured', async () => {
+    withNoLlmConfig()
+    renderDashboard()
+
+    expect(
+      await screen.findByText('Add your AI provider key in Settings'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Go to Settings' })).toHaveAttribute('href', '/settings')
+    // The gated state replaces the primary action entirely — there is no
+    // input left to paste into and collect a 4xx with.
+    expect(screen.queryByLabelText(/paste a job posting url/i)).not.toBeInTheDocument()
+  })
+
+  it('Task 10: treats a saved-but-never-validated config as not configured', async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/users/me/llm-config`, () =>
+        HttpResponse.json({
+          provider: 'groq',
+          model: null,
+          key_hint: '...ab12',
+          last_validated_at: null,
+        }),
+      ),
+    )
+    renderDashboard()
+
+    expect(await screen.findByText('Add your AI provider key in Settings')).toBeInTheDocument()
+    expect(screen.queryByLabelText(/paste a job posting url/i)).not.toBeInTheDocument()
+  })
+
+  it('Task 10: shows only the resume CTA when both the resume and the key are missing', async () => {
+    withNoAnalyzedResume()
+    withNoLlmConfig()
+    renderDashboard()
+
+    // One blocker, not two stacked banners: without an analyzed resume there
+    // is nothing for a submitted job to be matched against, so that is the
+    // step to take first (see jobSubmissionReadiness.ts).
+    expect(await screen.findByText('Add a resume to get started')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Upload a resume' })).toHaveAttribute('href', '/resumes')
+    expect(screen.queryByText('Add your AI provider key in Settings')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Go to Settings' })).not.toBeInTheDocument()
+  })
+
+  it('Task 10: renders the submit form normally once a validated key exists', async () => {
+    renderDashboard()
+
+    expect(await screen.findByLabelText(/paste a job posting url/i)).toBeInTheDocument()
+    expect(screen.queryByText('Add your AI provider key in Settings')).not.toBeInTheDocument()
   })
 })

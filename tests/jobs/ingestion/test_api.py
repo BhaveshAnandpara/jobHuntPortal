@@ -13,7 +13,7 @@ from infrastructure.auth.dependencies import get_current_user_id
 from infrastructure.kafka.in_memory import InMemoryBroker, InMemoryProducerClient
 from infrastructure.kafka.producer import EventProducer
 from infrastructure.kafka.topics import Topic
-from jobs.ingestion.api import router
+from jobs.ingestion.api import require_llm_configured, router
 from jobs.ingestion.dependencies import (
     get_event_producer,
     get_job_repository,
@@ -56,6 +56,12 @@ def _client(
     app.dependency_overrides[get_structured_extractor] = lambda: extractor
     app.dependency_overrides[get_event_producer] = lambda: producer
     app.dependency_overrides[get_current_user_id] = lambda: user_id
+    # `POST /jobs/ingest-url` is gated on a validated per-user LLM config
+    # (docs/llm-provider-config/TECH.md Task 7). These tests cover the
+    # endpoint's behavior for an already-configured user, so the gate is
+    # satisfied here; `tests/jobs/ingestion/test_llm_gating.py` exercises the
+    # gate itself against a real `user_llm_config` row.
+    app.dependency_overrides[require_llm_configured] = lambda: None
 
     return TestClient(app), repository, broker, user_id
 

@@ -81,7 +81,10 @@ async function setFilesViaPinnedFileList(locator: Locator, filePaths: string[]) 
  * timeout here is the right fix for that specific, real cause; it is not
  * masking a product defect.
  */
-export async function createIdentity(page: Page, opts?: { displayName?: string; emailPrefix?: string }) {
+export async function createIdentity(
+  page: Page,
+  opts?: { displayName?: string; emailPrefix?: string; configureLlm?: boolean },
+) {
   const displayName = opts?.displayName ?? 'E2E Test User'
   const email = uniqueEmail(opts?.emailPrefix ?? 'e2e')
   const password = 'e2e-test-password-123'
@@ -93,7 +96,95 @@ export async function createIdentity(page: Page, opts?: { displayName?: string; 
   await page.getByLabel('Password').fill(password)
   await page.getByRole('button', { name: 'Create account' }).click()
   await expect(page).toHaveURL('/', { timeout: 20_000 })
+
+  if (opts?.configureLlm !== false) {
+    await configureLlmKey(page)
+    // The app fetched `GET /users/me/llm-config` on mount and got a 404 (this
+    // account had no key a moment ago); `useLlmConfig` is fetch-once, so
+    // without a fresh document the gated surfaces would keep rendering the
+    // "add your key" state for the rest of the test. A reload rebuilds the
+    // query cache from the now-configured server state, and leaves the page
+    // exactly where this helper's contract says it is: the Dashboard.
+    await page.reload()
+    await expect(page).toHaveURL('/')
+  }
+
   return { email, displayName, password }
+}
+
+/** Where the E2E backend (`e2e/backend_server.py`) is reachable. Same
+ * spelling this suite already uses for its one other direct API call (see
+ * error-recovery.spec.ts's `apiBase`) — the literal loopback address the
+ * backend binds, not `localhost`, which Node may resolve to `::1` first. */
+const API_BASE_URL = process.env.E2E_API_BASE_URL ?? 'http://127.0.0.1:8000'
+
+/** Provider/key the E2E backend's fake save-time validation accepts. `groq`
+ * is an arbitrary valid choice — `e2e/backend_server.py`'s `E2EUserService`
+ * accepts any provider, and no real provider is ever contacted. Deliberately
+ * self-describing so a key that somehow escaped this suite is obviously not a
+ * credential. */
+export const E2E_LLM_PROVIDER = 'groq'
+export const E2E_LLM_API_KEY = 'test-fake-key-for-e2e'
+
+/**
+ * Gives the currently-signed-in account a validated AI provider key, via the
+ * real `PUT /users/me/llm-config`.
+ *
+ * WHY EVERY IDENTITY NEEDS THIS: `POST /resumes` and `POST /jobs/ingest-url`
+ * are gated on the caller having a validated provider key
+ * (docs/llm-provider-config/), so a freshly-registered account is blocked
+ * from both — confirmed directly against the E2E backend, no browser
+ * involved: an account with no key gets `400 LLM_NOT_CONFIGURED` from both
+ * endpoints. Configuring the key here rather than in each spec is what keeps
+ * every existing spec unchanged: they all start from `createIdentity`, and
+ * the state it hands back is now "registered AND able to use AI features",
+ * which is the state those specs were written against.
+ *
+ * This goes through the real endpoint (real validation, real encryption, real
+ * `user_llm_config` row) — the gate is never bypassed. Only the vendor's
+ * side of the save-time probe is faked, inside the E2E backend; see
+ * `E2EUserService` in `e2e/backend_server.py`.
+ *
+ * Uses `page.request` rather than a browser `fetch` so the call carries no
+ * CORS preflight and no dependency on whichever page is currently mounted;
+ * the bearer token is read from where the app itself keeps it.
+ */
+export async function configureLlmKey(page: Page) {
+  const token = await page.evaluate(() => localStorage.getItem('jobhunt.token'))
+  if (!token) {
+    throw new Error('configureLlmKey: no auth token in localStorage — register or log in first')
+  }
+  const headers = { Authorization: `Bearer ${token}` }
+
+  const response = await page.request.put(`${API_BASE_URL}/users/me/llm-config`, {
+    headers,
+    data: { provider: E2E_LLM_PROVIDER, model: null, api_key: E2E_LLM_API_KEY },
+  })
+  if (!response.ok()) {
+    throw new Error(
+      `configureLlmKey: PUT /users/me/llm-config failed (${response.status()}): ${await response.text()}`,
+    )
+  }
+
+  // Read it back until it is actually visible to a *subsequent* request
+  // before returning. The E2E backend's session dependency commits during
+  // FastAPI's dependency teardown, which runs after the response has already
+  // gone out, so the very next request can briefly still see "no config"
+  // (reproduced directly: a `POST /resumes` issued ~20ms after a `200` from
+  // this PUT was still rejected as LLM_NOT_CONFIGURED; the same call 1.5s
+  // later succeeded). This is the same commit-after-response behavior
+  // `waitForCondition` above documents for `POST /resumes`.
+  await expect
+    .poll(
+      async () => {
+        const read = await page.request.get(`${API_BASE_URL}/users/me/llm-config`, { headers })
+        if (!read.ok()) return false
+        const body = (await read.json()) as { last_validated_at?: string | null }
+        return Boolean(body.last_validated_at)
+      },
+      { timeout: 15_000, message: 'saved LLM config never became readable' },
+    )
+    .toBe(true)
 }
 
 /** Uploads one or more resume files via the /resumes page's hidden file

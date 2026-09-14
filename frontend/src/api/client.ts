@@ -59,7 +59,15 @@ async function parseErrorBody(response: Response): Promise<BackendErrorBody | nu
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * Everything every call shares: base URL, `Authorization`, the global 401
+ * handler, and the non-2xx → `ApiError` normalization. Split out of
+ * `request` so a binary response (see `requestFile`) goes through exactly
+ * the same auth and error contract as a JSON one instead of reaching for
+ * `fetch` itself — feature modules must never call `fetch` directly, and a
+ * second copy of this logic here would be the same drift by another route.
+ */
+async function sendRequest(path: string, init?: RequestInit): Promise<Response> {
   let response: Response
   const token = getToken()
 
@@ -96,11 +104,49 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     )
   }
 
+  return response
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await sendRequest(path, init)
+
   if (response.status === 204) {
     return undefined as T
   }
 
   return (await response.json()) as T
+}
+
+/**
+ * A file the backend streamed back as an attachment. `filename` is whatever
+ * the server asked the browser to save it as; `null` when the response
+ * carried no usable `Content-Disposition`, leaving the caller to name it.
+ */
+export type DownloadedFile = {
+  blob: Blob
+  filename: string | null
+}
+
+/**
+ * Matches the `filename="…"` parameter of a `Content-Disposition` header.
+ * Deliberately does not handle RFC 5987's `filename*=UTF-8''…` form: no
+ * route in this backend emits one (every download filename is built from a
+ * UUID — see `src/resume_tailoring/api.py::_document_filename`), and
+ * guessing at an encoding this app never receives would be untested code.
+ */
+const ATTACHMENT_FILENAME_PATTERN = /filename="?([^";]+)"?/i
+
+function parseAttachmentFilename(header: string | null): string | null {
+  const match = header ? ATTACHMENT_FILENAME_PATTERN.exec(header) : null
+  return match ? match[1].trim() : null
+}
+
+async function requestFile(path: string): Promise<DownloadedFile> {
+  const response = await sendRequest(path, { method: 'GET' })
+  return {
+    blob: await response.blob(),
+    filename: parseAttachmentFilename(response.headers.get('Content-Disposition')),
+  }
 }
 
 /**
@@ -127,6 +173,16 @@ export function toApiError(error: unknown): ApiError {
 
 export const apiClient = {
   get: <T>(path: string): Promise<T> => request<T>(path, { method: 'GET' }),
+
+  /**
+   * A binary `GET` — for routes that stream a file rather than JSON (the
+   * first is `GET /jobs/{job_id}/tailored-resume/download`). Kept here, and
+   * kept generic, because those routes still need the `Authorization`
+   * header: a plain `<a href>` to the endpoint cannot carry a Bearer token,
+   * so the bytes have to be fetched and handed to the browser afterwards —
+   * see `src/utils/download.ts`.
+   */
+  file: (path: string): Promise<DownloadedFile> => requestFile(path),
 
   post: <T>(path: string, body?: unknown): Promise<T> =>
     request<T>(path, {

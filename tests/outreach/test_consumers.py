@@ -625,3 +625,80 @@ def test_handle_outreach_approved_sync_wrapper_enforces_a_hard_timeout(monkeypat
 
     with pytest.raises(TimeoutError):
         consumers_module.handle_outreach_approved(envelope)
+
+
+@pytest.mark.asyncio
+async def test_handle_contacts_found_blocks_opportunity_when_llm_not_configured(
+    session_factory,
+) -> None:
+    """docs/llm-provider-config/TECH.md Task 8: a user with no validated AI
+    provider key pauses that one opportunity and returns normally, rather
+    than raising into `EventConsumer`'s retry/DLQ path.
+
+    `LlmNotConfiguredError` must be caught *before* the generic
+    `except Exception` that normalizes everything else into an
+    `OutreachError`, and no draft may be persisted or published for a run
+    that never happened.
+    """
+    from infrastructure.llm import LlmNotConfiguredError
+    from shared.contracts.opportunity_blocked import (
+        OpportunityBlockedReason,
+        set_opportunity_blocked_reporter,
+    )
+
+    job_id, user_id = JobId(uuid4()), UserId(uuid4())
+    contact = make_ranked_contact(profile_url="https://example.com/in/jordan-smith")
+    job_match = make_job_match_response()
+    profile = make_resume_profile().model_copy(
+        update={"profile_id": job_match.selected_profile_id}
+    )
+    job = make_job_response(job_id)
+
+    broker = InMemoryBroker()
+    db_module.set_session_factory(session_factory)
+    events_module.set_event_producer(
+        EventProducer("outreach-service", client=InMemoryProducerClient(broker))
+    )
+    consumers_module.set_job_match_client(FakeJobMatchClient({job_id: job_match}))
+    consumers_module.set_profile_service_client(
+        FakeProfileServiceClient({profile.profile_id: profile})
+    )
+    consumers_module.set_job_ingestion_client(FakeJobIngestionClient({job_id: job}))
+
+    class _UnconfiguredGraph:
+        @staticmethod
+        async def ainvoke(state):
+            raise LlmNotConfiguredError(state["user_id"])
+
+    consumers_module.set_graph(_UnconfiguredGraph())
+
+    reports: list[dict] = []
+
+    async def _reporter(**kwargs: object) -> None:
+        reports.append(kwargs)
+
+    envelope = build_envelope(
+        Topic.CONTACTS_FOUND,
+        _make_result(job_id, user_id, [contact]),
+        producer="contact-discovery-service",
+    )
+
+    set_opportunity_blocked_reporter(_reporter)
+    try:
+        # Returns normally — the assertion this whole test exists for.
+        await consumers_module._handle_contacts_found_async(envelope)
+    finally:
+        set_opportunity_blocked_reporter(None)
+
+    assert len(reports) == 1
+    assert reports[0]["reason"] is OpportunityBlockedReason.LLM_NOT_CONFIGURED
+    assert reports[0]["user_id"] == user_id
+    assert reports[0]["job_id"] == job_id
+    assert reports[0]["reported_by"] == "outreach-service"
+    assert reports[0]["correlation_id"] == envelope.correlation_id
+    # The company/title carried through for an out-of-order Application create.
+    assert reports[0]["company"] == job.company
+
+    assert broker.log(Topic.OUTREACH_GENERATED.value) == []
+    async with session_factory() as session:
+        assert await OutreachRepository(session).get_for_job(job_id) is None

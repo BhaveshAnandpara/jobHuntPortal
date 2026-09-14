@@ -44,12 +44,98 @@ class EducationEntry(BaseModel):
     graduation_year: int | None = None
 
 
+class ContactInfo(BaseModel):
+    """A candidate's own contact details, as literally stated on their
+    resume. Every field is optional: a resume that never states a phone
+    number must yield `phone=None`, never an invented one — and a resume
+    with no discoverable contact details at all yields no `ContactInfo` at
+    all (the owning field is `ContactInfo | None`).
+
+    Lives here next to `EducationEntry` — like it, this shape is carried
+    by both `CandidateProfile` (domain) and `ResumeProfile` (DTO), and
+    `shared.types.domain` imports from this module rather than the other
+    way around.
+    """
+
+    full_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    location: str | None = None
+    # Profile links, stated on the resume the same way an email or phone
+    # number is. Optional for exactly the same reason every field above is:
+    # a resume that never prints a LinkedIn URL must yield `None`, never a
+    # URL guessed from the candidate's name. `CandidateProfileRecord.contact`
+    # is a JSON column (profiles/models.py), so these three need no database
+    # migration — an existing row simply deserializes with all three unset.
+    linkedin_url: str | None = None
+    github_url: str | None = None
+    portfolio_url: str | None = None
+    # Whether an extraction pass has actually *looked* for the three link
+    # fields above, as opposed to never having been asked for them.
+    #
+    # The three URL fields shipped after `full_name`/`email`/`phone`/
+    # `location` did, so a profile parsed in between carries a populated
+    # contact whose links are `None` because nothing ever searched for them
+    # — indistinguishable, from the values alone, from a resume that
+    # genuinely prints no links. This flag makes the two distinguishable:
+    # `profiles.parsing.extract_profile_fields` sets it `True` on every
+    # successful extraction, links found or not, and
+    # `profiles.parsing.profile_needs_enrichment` re-parses exactly the
+    # contacts that still say `False`. A resume with no links is therefore
+    # checked once and never again.
+    #
+    # Additive with no migration, for the same reason the three URL fields
+    # were: `CandidateProfileRecord.contact` is a JSON column
+    # (profiles/models.py), so an existing row simply deserializes with this
+    # unset — i.e. `False`, "never looked", which is exactly right for a row
+    # written before this field existed.
+    links_checked: bool = False
+
+
+class WorkExperienceEntry(BaseModel):
+    """One employment entry from a resume, kept profession-independent:
+    `company`/`title` are free text, dates are free-text strings (resumes
+    write them as "Jan 2020", "2020-01", "Spring 2020", ...) rather than
+    parsed dates, and `bullets` are the entry's own achievement/
+    responsibility lines verbatim.
+
+    `end_date is None` means the role is current ("Present" on the resume).
+    """
+
+    company: str
+    title: str
+    start_date: str | None = None
+    end_date: str | None = None  # None => current role ("Present")
+    bullets: list[str] = []
+
+
 class ProfileMatchScore(BaseModel):
+    """One profile's score against one job.
+
+    `reasoning`, `hard_blocker` and `insufficient_detail` are additive,
+    default-bearing explanation fields (shared-types.md's additive-only
+    versioning rule). They are persisted inside the `job_matches.
+    profile_scores` JSON column, so rows written before they existed simply
+    lack the keys and the defaults below apply on read — no migration.
+    None of the three participates in `score`, `matched_skills` or
+    `missing_skills`; they only explain a score that was computed exactly
+    as it was before.
+    """
+
     profile_id: ProfileId
     resume_id: ResumeId
     score: float  # 0.0-1.0
     matched_skills: list[str] = []
     missing_skills: list[str] = []
+    # Why this score — the LLM already produced it; it is no longer dropped.
+    reasoning: str = ""
+    # A requirement the posting itself states as non-negotiable and that this
+    # candidate clearly fails. None whenever the posting states no such
+    # requirement, or states one the candidate meets. Never inferred.
+    hard_blocker: str | None = None
+    # True only when the posting carries too little real content to judge fit
+    # with confidence — not merely when some structured fields are empty.
+    insufficient_detail: bool = False
 
 
 class WorkflowError(BaseModel):
@@ -80,10 +166,12 @@ class ResumeProfile(BaseModel):
     user_id: UserId
     title: str
     summary: str | None = None
+    contact: ContactInfo | None = None
     skills: list[str] = []
     experience_years: float | None = None
     seniority: str | None = None
     education: list[EducationEntry] = []
+    work_history: list[WorkExperienceEntry] = []
     certifications: list[str] = []
     projects: list[str] = []
     industries: list[str] = []
@@ -228,7 +316,9 @@ class ApplicationStatusUpdate(BaseModel):
 
 
 __all__ = [
+    "ContactInfo",
     "EducationEntry",
+    "WorkExperienceEntry",
     "ProfileMatchScore",
     "WorkflowError",
     "ResumeProfile",

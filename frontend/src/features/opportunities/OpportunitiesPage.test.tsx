@@ -56,6 +56,7 @@ function renderOpportunities(initialEntries: Array<string | { pathname: string; 
             <Route path="/opportunities" element={<OpportunitiesPage />} />
             <Route path="/opportunities/:applicationId" element={<div>Detail Page Stub</div>} />
             <Route path="/resumes" element={<div>Resumes Page Stub</div>} />
+            <Route path="/settings" element={<div>Settings Page Stub</div>} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -240,5 +241,38 @@ describe('OpportunitiesPage', () => {
 
     await waitFor(() => expect(screen.getByText(/NewCo/)).toBeInTheDocument())
     expect(screen.getByText(/submitted\. analyzing/i)).toBeInTheDocument()
+  })
+
+  // --- Task 10 (docs/llm-provider-config/TECH.md): AI-provider-key gating ---
+
+  it('Task 10: points an account with no AI provider key at /settings instead of the submit form', async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/applications`, () => HttpResponse.json([])),
+      http.get(`${API_BASE_URL}/users/me/llm-config`, () =>
+        HttpResponse.json(
+          { detail: { code: 'NOT_FOUND', message: 'No AI provider configured.' } },
+          { status: 404 },
+        ),
+      ),
+    )
+    renderOpportunities()
+
+    // Both the page's own empty state and the submit form above it are
+    // gated — the form is the thing that would 4xx.
+    expect(await screen.findByText('Add your AI provider key in Settings')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Go to Settings' })).toHaveAttribute('href', '/settings')
+    expect(screen.getByRole('link', { name: 'Add your key in Settings' })).toHaveAttribute(
+      'href',
+      '/settings',
+    )
+    expect(screen.queryByLabelText(/paste a job posting url/i)).not.toBeInTheDocument()
+  })
+
+  it('Task 10: renders the submit form normally once a validated key exists', async () => {
+    server.use(http.get(`${API_BASE_URL}/applications`, () => HttpResponse.json([])))
+    renderOpportunities()
+
+    expect(await screen.findByLabelText(/paste a job posting url/i)).toBeInTheDocument()
+    expect(screen.queryByText('Add your AI provider key in Settings')).not.toBeInTheDocument()
   })
 })

@@ -46,7 +46,9 @@ class CandidateProfileRecord(Base):
 
     Every list column is JSON rather than a dialect-specific array type so
     the same schema runs on PostgreSQL and on SQLite in tests. `education`
-    holds serialized `EducationEntry` objects.
+    holds serialized `EducationEntry` objects, `work_history` serialized
+    `WorkExperienceEntry` objects, and `contact` a single serialized
+    `ContactInfo` object (nullable — a resume may state no contact details).
 
     No column here encodes a profession — `skills`, `industries`,
     `target_roles`, and `seniority` are free text inferred per resume, which
@@ -65,10 +67,18 @@ class CandidateProfileRecord(Base):
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # A single serialized `ContactInfo` object, or NULL when the resume
+    # stated no discoverable contact details at all.
+    contact: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=None)
     skills: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     experience_years: Mapped[float | None] = mapped_column(Float, nullable=True)
     seniority: Mapped[str | None] = mapped_column(String(64), nullable=True)
     education: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    # Serialized `WorkExperienceEntry` objects, same JSON-list pattern as
+    # `education`.
+    work_history: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
     certifications: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     projects: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     industries: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)

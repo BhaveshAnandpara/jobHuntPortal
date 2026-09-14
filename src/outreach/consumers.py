@@ -49,18 +49,28 @@ from infrastructure.kafka.consumer import (
     DEFAULT_HANDLER_TIMEOUT_SECONDS,
     propagate_correlation_id,
 )
-from infrastructure.llm import LLMProviderError
+from infrastructure.llm import LlmNotConfiguredError, LLMProviderError
 from infrastructure.logging import format_context, get_logger
 from outreach.clients import JobIngestionClient, JobMatchClient, ProfileServiceClient
 from outreach.db import outreach_session_scope
 from outreach.errors import OutreachError
 from outreach.events import publish_outreach_sent
 from outreach.repository import OutreachRepository
+from shared.contracts.opportunity_blocked import (
+    OpportunityBlockedReason,
+    report_opportunity_blocked,
+)
 from shared.errors.codes import ErrorCode
 from shared.events.envelope import EventEnvelope
 from shared.events.payloads import OutreachDecision, OutreachSentConfirmation
 from shared.types.dto import ContactRankingResult
-from shared.types.enums import OutreachChannel, OutreachDecisionType, OutreachStatus
+from shared.types.enums import (
+    EventType,
+    OutreachChannel,
+    OutreachDecisionType,
+    OutreachStatus,
+)
+from shared.types.ids import CorrelationId
 from workflows.langgraph.outreach_generation.context import (
     JobContext,
     reset_correlation_id,
@@ -175,6 +185,50 @@ def set_message_send_client(client: MessageSendClient | None) -> None:
 # ---------------------------------------------------------------------------
 # contacts.found -> outreach generation
 # ---------------------------------------------------------------------------
+
+
+async def _block_on_missing_llm_config(
+    result: ContactRankingResult,
+    correlation_id: CorrelationId | None,
+    *,
+    company: str | None = None,
+    title: str | None = None,
+) -> None:
+    """Degrade one opportunity gracefully when its user has no usable AI
+    provider key, instead of failing the message
+    (docs/llm-provider-config/TECH.md Task 8).
+
+    A missing key is a *user-settings* problem, not a pipeline fault: every
+    retry and every dead-letter of this message would fail identically
+    until the user goes and fixes it, so the retry/DLQ path buys nothing
+    and costs the user any visibility into why their opportunity stopped.
+    Reporting the block puts the reason where the user will actually see
+    it, and returning normally keeps this consumer's loop (shared by every
+    other user on this topic) moving.
+
+    `LlmNotConfiguredError` deliberately does not subclass
+    `LLMProviderError` (see its docstring), so it reaches here rather than
+    being normalized into this component's generic `LLM_PROVIDER_ERROR`
+    path.
+
+    `report_opportunity_blocked` is an abstraction in `shared/` — this
+    component states *what it observed*, never what lifecycle status to
+    write and never which service records it. See that module's docstring
+    for why the dependency runs that way round, and note that it logs at
+    `warning` with `user_id`/`correlation_id` and never raises, so no
+    bookkeeping failure can resurrect the exception this handler just chose
+    to absorb.
+    """
+    await report_opportunity_blocked(
+        job_id=result.job_id,
+        user_id=result.user_id,
+        reason=OpportunityBlockedReason.LLM_NOT_CONFIGURED,
+        reported_by="outreach-service",
+        correlation_id=correlation_id,
+        source_event_type=EventType.CONTACTS_FOUND,
+        company=company,
+        title=title,
+    )
 
 
 async def _handle_contacts_found_async(envelope: EventEnvelope[ContactRankingResult]) -> None:
@@ -292,6 +346,15 @@ async def _handle_contacts_found_async(envelope: EventEnvelope[ContactRankingRes
     job_context_token = set_job_context(job_context)
     try:
         final_state = await _get_graph().ainvoke(initial_state)
+    except LlmNotConfiguredError:
+        # Must precede the `except Exception` below, which would otherwise
+        # normalize this into an OutreachError and send it around the
+        # retry/DLQ loop. See _block_on_missing_llm_config's docstring.
+        # The `finally` below still runs before this return.
+        await _block_on_missing_llm_config(
+            result, correlation_id, company=job.company, title=job.title
+        )
+        return
     except OutreachError:
         # Already normalized (carries a duck-typed error_code) — re-raise
         # unchanged so EventConsumer's retry/DLQ mechanism sees it.

@@ -25,6 +25,9 @@ export const queryKeys = {
   job: (jobId: string) => ['job', jobId] as const,
   match: (jobId: string) => ['match', jobId] as const,
   contacts: (jobId: string) => ['contacts', jobId] as const,
+  /** At most one tailored resume exists per job (docs/tailored-resume/TECH.md
+   * Task 5), so this is keyed by job, not by tailored-resume id. */
+  tailoredResume: (jobId: string) => ['tailored-resume', jobId] as const,
   // `status` is an *optional tuple element*, not an always-present slot that
   // can hold `undefined` — omitting it (rather than appending a literal
   // `undefined` second element) is what makes `queryKeys.outreachList()`
@@ -42,4 +45,5 @@ export const queryKeys = {
   application: (applicationId: string) => ['application', applicationId] as const,
   history: (applicationId: string) => ['history', applicationId] as const,
   preferences: () => ['preferences'] as const,
+  llmConfig: () => ['llm-config'] as const,
 } as const

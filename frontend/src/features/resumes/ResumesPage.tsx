@@ -30,6 +30,16 @@
  * lives in `ResumeCard.tsx`. No API call, request shape or polling interval
  * was touched.
  *
+ * Task 10 (docs/llm-provider-config/TECH.md) adds one gate and changes
+ * nothing else: uploading a resume now requires a validated AI provider key,
+ * because parsing it is itself an LLM call and `POST /resumes` rejects the
+ * request outright without one. When that key is missing, the upload
+ * affordances (header button, empty-state CTA, per-row Replace) are replaced
+ * by the shared `LlmConfigRequiredEmptyState` pointing at `/settings` — the
+ * same EmptyState-with-CTA pattern this page already uses for its zero-resume
+ * state. Delete stays available: it needs no key, and a user clearing out old
+ * resumes shouldn't be blocked by an unrelated setting.
+ *
  * Owner: frontend-profile-agent.
  */
 
@@ -40,6 +50,8 @@ import { Button, Dialog, EmptyState, ErrorState, PageHeader, Skeleton } from '..
 import { useDeleteResume, useResumes, useUploadResume } from '../../api/resumes'
 import { useProfiles } from '../../api/profiles'
 import { toApiError } from '../../api/client'
+import { LlmConfigRequiredEmptyState } from '../gating/LlmConfigRequired'
+import { useLlmConfigReadiness } from '../gating/llmConfigReadiness'
 import { ResumeCard } from './ResumeCard'
 import type { ResumeProfile, ResumeResponse } from '../../api/types'
 
@@ -69,6 +81,13 @@ export function ResumesPage() {
   const profilesQuery = useProfiles()
   const uploadMutation = useUploadResume()
   const deleteMutation = useDeleteResume()
+  // `POST /resumes` is hard-gated server-side on a validated AI provider key
+  // (Task 7 of docs/llm-provider-config/TECH.md) — parsing a resume *is* an
+  // LLM call — so the upload affordances are replaced with the same
+  // EmptyState-plus-CTA gate the job-submission actions use, rather than
+  // letting the user pick a file and collect a 4xx. Fails open while the
+  // config query is loading or erroring, see `llmConfigReadiness.ts`.
+  const { isBlockedOnMissingLlmConfig } = useLlmConfigReadiness()
 
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const replaceInputRef = useRef<HTMLInputElement>(null)
@@ -230,14 +249,16 @@ export function ResumesPage() {
         title="Resumes"
         description="Upload and manage your resumes. Each one is analyzed automatically to build a profile the platform can match against opportunities."
         action={
-          <Button
-            variant="primary"
-            isLoading={isUploading}
-            onClick={() => uploadInputRef.current?.click()}
-          >
-            {isUploading ? null : <Upload className="h-4 w-4" aria-hidden />}
-            Upload resume
-          </Button>
+          isBlockedOnMissingLlmConfig ? undefined : (
+            <Button
+              variant="primary"
+              isLoading={isUploading}
+              onClick={() => uploadInputRef.current?.click()}
+            >
+              {isUploading ? null : <Upload className="h-4 w-4" aria-hidden />}
+              Upload resume
+            </Button>
+          )
         }
       />
 
@@ -257,6 +278,12 @@ export function ResumesPage() {
         aria-label="Replacement resume file"
       />
 
+      {isBlockedOnMissingLlmConfig ? (
+        <div className="mb-8">
+          <LlmConfigRequiredEmptyState description="Every uploaded resume is analyzed by your own AI provider to build the profile opportunities are matched against, so a working key is needed before a resume can be uploaded." />
+        </div>
+      ) : null}
+
       {resumesQuery.isLoading ? (
         <div className="flex flex-col gap-4">
           <Skeleton className="h-32 w-full rounded-lg" />
@@ -264,6 +291,11 @@ export function ResumesPage() {
         </div>
       ) : loadError ? (
         <ErrorState message={loadError.message} onRetry={() => void resumesQuery.refetch()} />
+      ) : resumes.length === 0 && isBlockedOnMissingLlmConfig ? (
+        // The gate above already says what to do next; the usual "No resumes
+        // yet" state's only action is the upload that is currently blocked,
+        // so showing both would offer a dead CTA beside the live one.
+        null
       ) : resumes.length === 0 ? (
         <EmptyState
           icon={<FileText className="h-8 w-8" aria-hidden />}
@@ -283,7 +315,9 @@ export function ResumesPage() {
               <ResumeCard
                 resume={resume}
                 profile={profilesByResumeId.get(resume.id)}
-                isReplaceDisabled={isReplacing}
+                // Replace uploads a new resume first, so it is gated on the
+                // same key as a plain upload.
+                isReplaceDisabled={isReplacing || isBlockedOnMissingLlmConfig}
                 onReplace={() => {
                   setReplaceTarget(resume)
                   replaceInputRef.current?.click()

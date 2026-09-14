@@ -77,6 +77,20 @@ arguably closer to how a real deployment's `ProfileServiceClient` etc.
 would behave (a real HTTP call to another service, made fresh every time)
 than a static snapshot would be.
 
+Per-user LLM configuration
+---------------------------
+`POST /resumes` and `POST /jobs/ingest-url` are gated on the calling user
+having a validated `user_llm_config` row (docs/llm-provider-config/). That
+gate runs for real here — it is not overridden — so every E2E account must
+actually save a provider key first, which `frontend/tests/e2e/helpers.ts`'s
+`createIdentity` now does through the real `PUT /users/me/llm-config`. Two
+pieces of wiring make that possible without a real vendor account:
+`llm_user_client.set_session_factory(...)` (so the gate reads this process's
+SQLite DB rather than the real Postgres URL in `.env`) and `E2EUserService`
+(so the save-time key-validation probe is answered by a fake, like every
+other LLM call in this process). See `E2EUserService`'s own comment block for
+why that fake cannot weaken a real deployment.
+
 Known non-invasive gap fix: `src/api/main.py` does not add CORS middleware
 (there is no cross-origin browser client in the backend's own test suite,
 so this was never exercised). A real browser on `http://localhost:5173`
@@ -131,8 +145,19 @@ for _path in (str(_REPO_ROOT), str(_SRC)):
 # their own to inherit a token from.
 os.environ.setdefault("JWT_SECRET_KEY", "e2e-test-only-secret-do-not-use-in-prod")
 
+# Same reasoning for the at-rest encryption key that `PUT /users/me/llm-config`
+# needs (`infrastructure.security.encryption`, which deliberately refuses to
+# invent a default): a fixed, obviously-fake Fernet key, valid only inside this
+# throwaway process's throwaway SQLite file. It is
+# `base64.urlsafe_b64encode(b"e2e-test-only-fernet-key-do-not!")` — never a
+# value used anywhere real, and nothing it encrypts outlives the run.
+os.environ.setdefault(
+    "LLM_CONFIG_ENCRYPTION_KEY", "ZTJlLXRlc3Qtb25seS1mZXJuZXQta2V5LWRvLW5vdCE="
+)
+
 import contacts.consumers as contacts_consumers
 import contacts.db as contacts_db
+import infrastructure.llm.user_client as llm_user_client
 import contacts.events as contacts_events
 import contacts.models  # noqa: F401 - registers tables on Base.metadata
 import jobs.models  # noqa: F401
@@ -194,6 +219,13 @@ from tests.jobs.conftest import FakeExtractor, FakePageFetcher, make_extracted_f
 from tests.outreach.conftest import FakeLLMClient as OutreachFakeLLMClient
 from tracking.api.dependencies import get_session as tracking_get_session
 from users.api.dependencies import get_session as users_get_session
+from users.api.dependencies import get_user_service as users_get_user_service
+from users.repository import (
+    UserLlmConfigRepository,
+    UserPreferencesRepository,
+    UserRepository,
+)
+from users.service import UserService
 from workflows.langgraph.contact_discovery.discovery import (
     ContactClassificationBatch,
     ContactSearchPlan,
@@ -685,6 +717,55 @@ OUTREACH_LLM = OutreachFakeLLMClient(
 
 
 # ---------------------------------------------------------------------------
+# Save-time API-key validation fake (`PUT /users/me/llm-config`).
+#
+# Every other LLM call in this process is answered by one of the scripted
+# fakes above, injected through a real DI seam. The save-time key-validation
+# probe (`UserService._validate_llm_key`, docs/llm-provider-config/TECH.md
+# Task 6) is the one LLM call with no such seam: it builds its own throwaway
+# `LLMClient` from the key the user just submitted, on purpose, so that what
+# gets validated is exactly the provider/model/key combination that later real
+# calls will use. Confirmed by direct probe against this harness before this
+# class existed: `PUT /users/me/llm-config` with a fake key reached
+# api.groq.com over the real network and came back `401` -> `400
+# VALIDATION_ERROR`, so no E2E account could ever be configured without a real
+# third-party key.
+#
+# This subclass is this harness's fake *answer* for that one call, in exactly
+# the same spirit as `ResumeExtractionLLM`/`MATCHING_LLM`/`CONTACTS_LLM`: the
+# provider says "yes, that key works". Nothing about the gate itself is
+# relaxed — `require_llm_configured` (profiles + jobs) still runs for real on
+# every gated request, still reads the real `user_llm_config` row through the
+# real `get_user_llm_client`, and still rejects an account that has not saved
+# a key. Only "is this key live at the vendor" is faked, which is precisely
+# the question that cannot be answered without a real vendor account.
+#
+# Why this is not reachable in a real deployment: it lives in `e2e/`, outside
+# both `src/` and `tests/`, is never imported by anything the application
+# imports (`src/` has no reference to this file), and is applied ONLY via
+# `app.dependency_overrides[...]` inside this script's own process — the same
+# mechanism every other fake here uses. `src/users/service.py` is untouched:
+# there is no env var, no flag, and no branch in production code that can turn
+# validation off. Running the real `api.main:app` under uvicorn/gunicorn never
+# executes a line of this file.
+# ---------------------------------------------------------------------------
+
+assert hasattr(UserService, "_validate_llm_key"), (
+    "UserService._validate_llm_key no longer exists — E2EUserService below "
+    "silently stopped faking save-time key validation, and PUT "
+    "/users/me/llm-config would start making real provider calls. Re-point "
+    "the override at whatever replaced it."
+)
+
+
+class E2EUserService(UserService):
+    """`UserService` whose save-time provider probe always succeeds."""
+
+    async def _validate_llm_key(self, provider, model, api_key) -> None:  # noqa: ANN001
+        logger.info("fake LLM key validation accepted | provider=%s", provider.value)
+
+
+# ---------------------------------------------------------------------------
 # "Live" clients — call the real HTTP API in-process (ASGI transport, no
 # real socket) on every invocation, so they always reflect current DB state
 # regardless of when a consumer handler fires. See this file's header for
@@ -873,6 +954,14 @@ async def _amain() -> None:
     contacts_db.set_session_factory(session_factory)
     outreach_db.set_session_factory(session_factory)
     tracking_db.set_session_factory(session_factory)
+    # `get_user_llm_client` resolves its own session (it runs in both request
+    # and consumer contexts), so it needs the same seam every other
+    # consumer-side DB access point here already uses. Without this it falls
+    # back to the process-wide `infrastructure.database` engine — the real
+    # Postgres URL from .env — and `require_llm_configured` turns every
+    # `POST /resumes`/`POST /jobs/ingest-url` into a 500 instead of a real
+    # gate decision (confirmed by direct probe; see this file's header).
+    llm_user_client.set_session_factory(session_factory)
 
     app = fastapi_app
     app.dependency_overrides = {}
@@ -885,6 +974,21 @@ async def _amain() -> None:
     app.dependency_overrides[tracking_get_session] = _session_dependency_factory(session_factory)
     app.dependency_overrides[profiles_get_session] = _session_dependency_factory(session_factory)
     app.dependency_overrides[jobs_get_event_producer] = lambda: jobs_producer
+
+    # See `E2EUserService` above — the real `UserService`, with only the
+    # save-time "call the vendor to check this key" probe faked. Every other
+    # `/users` route behaves identically, since nothing else on this service
+    # touches an LLM.
+    def _user_service_override(
+        session: Annotated[AsyncSession, Depends(users_get_session)],
+    ) -> UserService:
+        return E2EUserService(
+            users=UserRepository(session),
+            preferences=UserPreferencesRepository(session),
+            llm_configs=UserLlmConfigRepository(session),
+        )
+
+    app.dependency_overrides[users_get_user_service] = _user_service_override
 
     resume_dir = Path(tempfile.mkdtemp(prefix="e2e-resumes-"))
     resume_storage = LocalResumeStorage(base_dir=resume_dir)
@@ -970,6 +1074,8 @@ async def _amain() -> None:
 
         tracking_db.set_session_factory(None)
         tracking_events.set_event_producer(None)
+
+        llm_user_client.set_session_factory(None)
 
         await engine.dispose()
 

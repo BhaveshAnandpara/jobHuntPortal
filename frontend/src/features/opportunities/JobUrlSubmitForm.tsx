@@ -42,6 +42,7 @@ import { Button, FieldError, Input } from '../../components'
 import { useIngestJobUrl } from '../../api/jobs'
 import { toApiError } from '../../api/client'
 import { httpUrl } from '../../utils/validation'
+import { LlmConfigRequiredNotice } from '../gating/LlmConfigRequired'
 import { useJobSubmissionReadiness } from './jobSubmissionReadiness'
 
 const schema = z.object({ url: httpUrl })
@@ -50,7 +51,7 @@ type FormValues = z.infer<typeof schema>
 export function JobUrlSubmitForm({ className = '' }: { className?: string }) {
   const navigate = useNavigate()
   const ingest = useIngestJobUrl()
-  const { isBlockedOnMissingResume } = useJobSubmissionReadiness()
+  const { blocker } = useJobSubmissionReadiness()
   const {
     register,
     handleSubmit,
@@ -84,7 +85,7 @@ export function JobUrlSubmitForm({ className = '' }: { className?: string }) {
   // secondary API being slow or briefly unavailable; only flips to the
   // blocked message once the fetch has definitively resolved to zero
   // active profiles. See `jobSubmissionReadiness.ts`.
-  if (isBlockedOnMissingResume) {
+  if (blocker === 'missing-resume') {
     return (
       <div className={className}>
         <p className="mb-1 text-sm font-medium text-gray-700">Paste a job posting URL</p>
@@ -95,6 +96,21 @@ export function JobUrlSubmitForm({ className = '' }: { className?: string }) {
             Upload a resume
           </Link>
         </p>
+      </div>
+    )
+  }
+
+  // Same treatment, the other hard gate: `POST /jobs/ingest-url` is rejected
+  // outright without a validated AI provider key (Task 7 of
+  // docs/llm-provider-config/TECH.md), since every step the submission
+  // triggers — extraction, matching, outreach drafting — runs on the user's
+  // own key. Only reachable when a resume already exists, per
+  // `jobSubmissionReadiness.ts`'s single-blocker rule.
+  if (blocker === 'missing-llm-config') {
+    return (
+      <div className={className}>
+        <p className="mb-1 text-sm font-medium text-gray-700">Paste a job posting URL</p>
+        <LlmConfigRequiredNotice description="Submitting a job runs it through your own AI provider, so a working key is needed before opportunities can be added." />
       </div>
     )
   }

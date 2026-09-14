@@ -191,8 +191,28 @@ class EventConsumer:
     def poll_once(self, timeout: float = 1.0) -> bool:
         """Poll for and fully process at most one message.
 
-        Returns ``True`` if a message was handled (successfully or
-        dead-lettered), ``False`` if none was available within ``timeout``.
+        Returns ``True`` if a message was handled (successfully,
+        dead-lettered, or abandoned after an unrecoverable per-message
+        failure), ``False`` if none was available within ``timeout``.
+
+        **Per-message exception isolation.** ``_process_message`` already
+        isolates the *handler's* own exceptions (retry, then DLQ), but the
+        work it does around the handler does not run under that ``try``:
+        the DLQ publish itself (``_producer()`` lazily constructing an
+        ``EventProducer``, ``publish_raw`` reaching an unavailable broker),
+        the offset ``_commit``, and any exception out of ``deserialize``
+        that is not an ``EventDeserializationError``. Before this guard,
+        any one of those escaped ``poll_once`` -> ``run`` -> the consumer's
+        thread, and ``scripts/run_consumers.py``'s ``_run`` only catches at
+        the thread level — i.e. it logged "Consumer crashed" and that
+        (topic, group) stopped consuming for the lifetime of the process.
+
+        One message must never be able to end a consumer's loop, so every
+        per-message failure is logged and swallowed here. Swallowing is
+        safe precisely because the offset is only committed on a path that
+        completed: a message abandoned here stays uncommitted and is
+        redelivered on the next rebalance/restart, which is the correct
+        at-least-once outcome for a transient broker failure.
         """
         self.subscribe()
         message = self._client.poll(timeout)
@@ -204,7 +224,19 @@ class EventConsumer:
             # message to hand to the handler. Nothing to commit.
             logger.debug("Kafka poll returned a non-fatal error: %s", error)
             return False
-        self._process_message(message)
+        try:
+            self._process_message(message)
+        except Exception:
+            # Broad on purpose — see the docstring above: nothing one
+            # message does may kill the loop. `logger.exception` already
+            # carries the traceback, so the context line stays identifying
+            # (which consumer, which topic) rather than repeating it.
+            logger.exception(
+                "Message abandoned after a failure outside the handler's own "
+                "retry/DLQ path; offset left uncommitted and the consumer loop "
+                "continues | %s",
+                format_context(topic=self.topic.value, group_id=self.group_id),
+            )
         return True
 
     def run(

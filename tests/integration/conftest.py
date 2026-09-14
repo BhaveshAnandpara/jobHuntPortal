@@ -83,6 +83,7 @@ from infrastructure.kafka.in_memory import InMemoryBroker, InMemoryProducerClien
 from infrastructure.kafka.producer import EventProducer
 from infrastructure.kafka.serialization import deserialize
 from infrastructure.kafka.topics import Topic
+from jobs.ingestion.api import require_llm_configured as jobs_require_llm_configured
 from jobs.ingestion.dependencies import get_db_session as jobs_get_db_session
 from jobs.ingestion.dependencies import get_event_producer as jobs_get_event_producer
 from jobs.ingestion.dependencies import get_page_fetcher as jobs_get_page_fetcher
@@ -95,6 +96,9 @@ from profiles.api.dependencies import (
     get_profile_service as profiles_get_profile_service,
 )
 from profiles.api.dependencies import get_session as profiles_get_session
+from profiles.api.routes import (
+    require_llm_configured as profiles_require_llm_configured,
+)
 from profiles.repository import CandidateProfileRepository, ResumeRepository
 from profiles.service import ProfileService
 from profiles.storage import LocalResumeStorage
@@ -484,6 +488,17 @@ async def harness(tmp_path: Path) -> AsyncIterator[IntegrationHarness]:
     app.dependency_overrides[tracking_get_session] = _session_dependency_factory(session_factory)
     app.dependency_overrides[profiles_get_session] = _session_dependency_factory(session_factory)
     app.dependency_overrides[jobs_get_event_producer] = lambda: jobs_producer
+
+    # `POST /resumes` and `POST /jobs/ingest-url` are gated on the calling
+    # user's validated `user_llm_config` row (docs/llm-provider-config/TECH.md
+    # Task 7). Every user this harness creates is treated as already
+    # configured: these flows are about the event chain, not about key
+    # configuration, and the harness's LLM seams are the component-level
+    # `set_*_llm`/`FakeExtractor` fakes rather than a real stored key. The
+    # gate's own behavior is covered by tests/profiles/test_llm_gating.py and
+    # tests/jobs/ingestion/test_llm_gating.py.
+    app.dependency_overrides[profiles_require_llm_configured] = lambda: None
+    app.dependency_overrides[jobs_require_llm_configured] = lambda: None
 
     resume_storage = LocalResumeStorage(base_dir=tmp_path / "resumes")
     llm_holder: dict[str, object] = {"client": None}

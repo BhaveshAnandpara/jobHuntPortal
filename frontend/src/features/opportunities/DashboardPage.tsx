@@ -48,6 +48,7 @@ import { useApplications } from '../../api/tracking'
 import { useOutreachList } from '../../api/outreach'
 import { pollAlways } from '../../hooks/usePolling'
 import { toApiError } from '../../api/client'
+import { LlmConfigRequiredEmptyState } from '../gating/LlmConfigRequired'
 import { JobUrlSubmitForm } from './JobUrlSubmitForm'
 import { NeedsAttentionList } from './NeedsAttentionList'
 import { PipelineSummary } from './PipelineSummary'
@@ -75,7 +76,7 @@ export function DashboardPage() {
   const pendingOutreach = useOutreachList('PENDING_APPROVAL', {
     refetchInterval: pollAlways(10000),
   })
-  const { isBlockedOnMissingResume } = useJobSubmissionReadiness()
+  const { blocker } = useJobSubmissionReadiness()
 
   const applicationList = useMemo(() => applications.data ?? [], [applications.data])
   const hasAnyOpportunities = applicationList.length > 0
@@ -106,10 +107,12 @@ export function DashboardPage() {
     closed: applicationList.filter((a) => matchesStatusTab(a.status, 'closed')).length,
   }
 
-  // Nothing to show at all: no resume to match against *and* no history.
+  // Nothing to show at all: nothing submittable yet *and* no history.
   // Showing a pipeline of three zeros here would be technically accurate and
-  // completely useless — T5 asks for the resume CTA instead.
-  const showOnlyOnboarding = isBlockedOnMissingResume && !hasAnyOpportunities
+  // completely useless — T5 asks for the onboarding CTA instead. Task 10 of
+  // docs/llm-provider-config/TECH.md extends "nothing submittable yet" to the
+  // missing-key case, which blocks submission just as hard.
+  const showOnlyOnboarding = blocker !== null && !hasAnyOpportunities
 
   return (
     <div>
@@ -118,7 +121,7 @@ export function DashboardPage() {
         description="Submit a job posting, review anything waiting on your approval, and see where every opportunity stands."
       />
 
-      {isBlockedOnMissingResume ? (
+      {blocker === 'missing-resume' ? (
         <div className="mb-8">
           <EmptyState
             icon={<FileText className="h-8 w-8" aria-hidden />}
@@ -130,6 +133,12 @@ export function DashboardPage() {
               </Link>
             }
           />
+        </div>
+      ) : blocker === 'missing-llm-config' ? (
+        // Same slot, same pattern, the other hard gate — only ever one of the
+        // two, see `jobSubmissionReadiness.ts`.
+        <div className="mb-8">
+          <LlmConfigRequiredEmptyState description="Submitting a job runs it through your own AI provider — extracting the posting, scoring it against your resume, drafting outreach — so a working key is needed before opportunities can be added." />
         </div>
       ) : (
         <Card className="mb-8 transition-shadow hover:shadow-md">

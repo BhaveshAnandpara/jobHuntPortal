@@ -54,6 +54,19 @@ test('approve 409 conflict (already decided elsewhere) shows a specific inline m
   await expect(page).toHaveURL(/\/outreach\//)
   const outreachId = page.url().split('/outreach/')[1]
 
+  // This test's whole premise is a UI that is *already showing* the pending
+  // decision when the record changes underneath it, so wait for that state to
+  // actually be on screen before changing it. Without this wait the
+  // out-of-band approve below can beat this page's own first
+  // `GET /outreach/{id}` (the panel is still loading at this point), in which
+  // case the panel renders the already-APPROVED record and the Approve button
+  // never appears at all — the test then times out on a stale-state scenario
+  // it never managed to set up. Confirmed by direct instrumentation: with
+  // this wait the button is present and stays present after the out-of-band
+  // approve; without it, the page can come back already decided.
+  const approveButton = page.getByRole('button', { name: 'Approve' })
+  await expect(approveButton).toBeVisible({ timeout: 15_000 })
+
   // Decide it server-side out from under the still-open, stale UI (the
   // same real endpoint the UI itself would call, simulating "another tab
   // already approved this") — this is the real, expected concurrent-edit
@@ -69,7 +82,7 @@ test('approve 409 conflict (already decided elsewhere) shows a specific inline m
   // inline message (the backend's own message, e.g. "outreach ... is in
   // status APPROVED, not eligible for this action" — see
   // src/outreach/api/routes.py's `_conflict`), not a generic toast.
-  await page.getByRole('button', { name: 'Approve' }).click()
+  await approveButton.click()
   await expect(page.getByText(/not eligible for this action/i)).toBeVisible({ timeout: 10_000 })
 
   // The panel's own refetch (built into the 409 handling) then shows the

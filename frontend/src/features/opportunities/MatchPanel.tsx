@@ -2,7 +2,11 @@
  * Match panel — Opportunity Detail. Score/matched/missing skills are read
  * from the already-fetched `ApplicationResponse` (never re-derived, never
  * duplicated from `useJobMatch`) per docs/frontend/api-mapping.md's explicit
- * guidance; `recommendation` is the one field only `useJobMatch` carries.
+ * guidance; `recommendation` is joined by `reasoning`, `hard_blocker` and
+ * `insufficient_detail` as the fields only `useJobMatch` carries — the
+ * backend projects those three onto `JobMatchResponse` from the selected
+ * profile's `ProfileMatchScore`, so they arrive already resolved to the
+ * winning resume and this panel never touches the `profile_scores` array.
  * Selected resume resolves `ApplicationResponse.selected_resume_id` (a
  * `resume_id`) against `ResumeProfile.resume_id` — see
  * OpportunityDetailPage.tsx's header comment for why `useProfiles` +
@@ -20,8 +24,9 @@
  *   is in flight when the real answer is "this step is still queued";
  * - the score gets a bar, because `match_score` is a real 0–1 number the
  *   backend already computed. There is no second "confidence" figure beside
- *   it: `match_score` and `recommendation` are the only two judgments the API
- *   returns, so they are the only two shown (spec Section 3, item 1);
+ *   it. (`hard_blocker` and `insufficient_detail` are not a second
+ *   confidence figure — they are the backend's own stated findings, shown
+ *   as a warning and a footnote rather than as a number beside the score);
  * - strengths and gaps keep the status-category colors (green/red) from the
  *   shared token set rather than one-off hexes, and each says so in words as
  *   well as color.
@@ -29,7 +34,7 @@
  * Owner: frontend-opportunities-agent.
  */
 
-import { Sparkles } from 'lucide-react'
+import { AlertTriangle, Info, Sparkles } from 'lucide-react'
 import { ErrorState, Skeleton, StatusBadge } from '../../components'
 import { DetailPanel, StageNotReached } from './DetailPanel'
 import type { ApplicationResponse, MatchRecommendation, ResumeProfile } from '../../api/types'
@@ -40,6 +45,20 @@ type MatchPanelProps = {
   /** False only when the matching stage provably hasn't run yet — see lifecycleStage.ts. */
   isAvailable: boolean
   recommendation: MatchRecommendation | undefined
+  /**
+   * The three explanation fields below come from the same `useJobMatch`
+   * query as `recommendation` — the backend projects them onto
+   * `JobMatchResponse` from the *selected* profile's `ProfileMatchScore`.
+   * They are not on `ApplicationResponse` and must not be re-derived from
+   * `profile_scores` here.
+   *
+   * All three are absent for any match computed before the feature existed,
+   * so every one of `undefined` / `null` / `''` / `false` means "not
+   * present" and renders nothing at all — never an empty box.
+   */
+  reasoning?: string | null
+  hardBlocker?: string | null
+  insufficientDetail?: boolean
   isRecommendationLoading: boolean
   isRecommendationError: boolean
   recommendationErrorMessage?: string
@@ -89,6 +108,9 @@ export function MatchPanel({
   application,
   isAvailable,
   recommendation,
+  reasoning,
+  hardBlocker,
+  insufficientDetail,
   isRecommendationLoading,
   isRecommendationError,
   recommendationErrorMessage,
@@ -114,9 +136,36 @@ export function MatchPanel({
   const scorePercent =
     application.match_score != null ? Math.max(0, Math.min(100, application.match_score * 100)) : null
 
+  // Trimmed so a whitespace-only string from an older record is treated as
+  // absent rather than rendering an empty paragraph.
+  const reasoningText = reasoning?.trim()
+  const hardBlockerText = hardBlocker?.trim()
+
   return (
     <DetailPanel title="Match" description="How your selected resume scored against this posting.">
       <div className="flex flex-col gap-5">
+        {hardBlockerText ? (
+          // Deliberately the first thing in the panel and the loudest thing
+          // in it: this is the one finding that can make the rest of the
+          // score moot, so it has to land before the user reads a strong
+          // percentage and invests effort on the back of it.
+          <div
+            role="alert"
+            className="flex items-start gap-2.5 rounded-lg border border-status-negative/30 bg-status-negative-bg p-3"
+          >
+            <AlertTriangle
+              className="mt-0.5 h-4 w-4 shrink-0 text-status-negative"
+              aria-hidden
+            />
+            <div>
+              <p className="text-sm font-semibold text-status-negative">
+                Likely blocker
+              </p>
+              <p className="mt-0.5 text-sm text-status-negative">{hardBlockerText}</p>
+            </div>
+          </div>
+        ) : null}
+
         <div className="flex flex-wrap items-start gap-x-10 gap-y-4">
           <div className="min-w-[9rem]">
             <p className="text-xs font-medium text-gray-500">Score</p>
@@ -172,6 +221,24 @@ export function MatchPanel({
             </div>
           </div>
         </div>
+
+        {insufficientDetail ? (
+          // Not an error and not styled as one: the score is still real,
+          // it just rests on a thin posting. Sits under the score it
+          // qualifies rather than at the top, so it reads as a footnote to
+          // the number instead of competing with the blocker above.
+          <p className="-mt-2 flex items-start gap-1.5 text-xs text-gray-500">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span>Limited job detail — this score may be less reliable.</span>
+          </p>
+        ) : null}
+
+        {reasoningText ? (
+          <div>
+            <p className="text-xs font-medium text-gray-500">Why this score</p>
+            <p className="mt-1.5 text-sm leading-relaxed text-gray-700">{reasoningText}</p>
+          </div>
+        ) : null}
 
         <div>
           <p className="text-xs font-medium text-gray-500">Selected resume</p>

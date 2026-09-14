@@ -59,6 +59,37 @@ def excerpt(text: str, limit: int = _RAW_TEXT_EXCERPT_LIMIT) -> str:
     return f"{text[:limit]}... [truncated, {len(text)} chars total]"
 
 
+class LlmNotConfiguredError(Exception):
+    """The user has no usable LLM provider configuration on file.
+
+    Raised by `infrastructure.llm.user_client.get_user_llm_client` when the
+    `user_llm_config` row is missing, has never been validated against the
+    live provider (`last_validated_at is None`), or stores no key. It means
+    "this user must go configure a key" — a *user action*, not a provider
+    failure — which is why it deliberately does **not** subclass
+    `LLMProviderError`: every existing `except LLMProviderError` handler in
+    the workflows treats its exception as a transient model failure worth a
+    retry or a degraded fallback, and silently swallowing a
+    not-configured-at-all condition into that path would hide the one thing
+    the user actually needs to be told.
+
+    `error_code` is `LLM_PROVIDER_ERROR` only as an interim mapping: the
+    dedicated `ErrorCode.LLM_NOT_CONFIGURED` and its 4xx mapping belong to
+    the gating task (docs/llm-provider-config/TECH.md Task 7), which owns
+    `shared/errors/codes.py`.
+    """
+
+    error_code: ErrorCode = ErrorCode.LLM_PROVIDER_ERROR
+
+    def __init__(self, user_id: object, message: str | None = None) -> None:
+        self.user_id = user_id
+        self.message = message or (
+            f"user {user_id} has no validated LLM provider configuration; "
+            "add an AI provider key in Settings to use this feature"
+        )
+        super().__init__(self.message)
+
+
 class LLMProviderError(Exception):
     """The only exception this layer raises to its callers."""
 
@@ -94,4 +125,9 @@ class LLMProviderError(Exception):
         )
 
 
-__all__ = ["LLMFailureReason", "LLMProviderError", "excerpt"]
+__all__ = [
+    "LLMFailureReason",
+    "LLMProviderError",
+    "LlmNotConfiguredError",
+    "excerpt",
+]

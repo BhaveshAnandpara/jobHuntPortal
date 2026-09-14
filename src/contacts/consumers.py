@@ -31,11 +31,16 @@ from infrastructure.kafka.consumer import (
     DEFAULT_HANDLER_TIMEOUT_SECONDS,
     propagate_correlation_id,
 )
-from infrastructure.llm import LLMProviderError
+from infrastructure.llm import LlmNotConfiguredError, LLMProviderError
 from infrastructure.logging import format_context, get_logger
+from shared.contracts.opportunity_blocked import (
+    OpportunityBlockedReason,
+    report_opportunity_blocked,
+)
 from shared.errors.codes import ErrorCode
 from shared.events.envelope import EventEnvelope
 from shared.events.payloads import ContactSearchRequest
+from shared.types.enums import EventType
 from shared.types.ids import CorrelationId
 from workflows.langgraph.contact_discovery.context import (
     reset_contact_details,
@@ -122,6 +127,46 @@ async def _run_discovery(
     return result
 
 
+async def _block_on_missing_llm_config(
+    payload: ContactSearchRequest, correlation_id: CorrelationId | None
+) -> None:
+    """Degrade one opportunity gracefully when its user has no usable AI
+    provider key, instead of failing the message
+    (docs/llm-provider-config/TECH.md Task 8).
+
+    A missing key is a *user-settings* problem, not a pipeline fault: every
+    retry and every dead-letter of this message would fail identically
+    until the user goes and fixes it, so the retry/DLQ path buys nothing
+    and costs the user any visibility into why their opportunity stopped.
+    Reporting the block puts the reason where the user will actually see
+    it, and returning normally keeps this consumer's loop (shared by every
+    other user on this topic) moving.
+
+    `LlmNotConfiguredError` deliberately does not subclass
+    `LLMProviderError` (see its docstring), so it reaches here rather than
+    being swallowed by this workflow's search-plan/classification LLM
+    fallbacks, which would otherwise degrade silently to a keyword search
+    and never tell the user why their results got worse.
+
+    `report_opportunity_blocked` is an abstraction in `shared/` — this
+    component states *what it observed*, never what lifecycle status to
+    write and never which service records it. See that module's docstring
+    for why the dependency runs that way round, and note that it logs at
+    `warning` with `user_id`/`correlation_id` and never raises, so no
+    bookkeeping failure can resurrect the exception this handler just chose
+    to absorb.
+    """
+    await report_opportunity_blocked(
+        job_id=payload.job_id,
+        user_id=payload.user_id,
+        reason=OpportunityBlockedReason.LLM_NOT_CONFIGURED,
+        reported_by="contact-discovery-service",
+        correlation_id=correlation_id,
+        source_event_type=EventType.CONTACTS_REQUESTED,
+        company=payload.company,
+    )
+
+
 def handle_contacts_requested(envelope: EventEnvelope[ContactSearchRequest]) -> None:
     """Sync entry point required by `EventConsumer`'s `EventHandler`
     contract — see this module's docstring for why. Constructible as
@@ -184,6 +229,12 @@ async def _handle_contacts_requested_async(
 
     try:
         await _run_discovery(payload, correlation_id)
+    except LlmNotConfiguredError:
+        # Must precede the `except Exception` below, which would otherwise
+        # normalize this into a ContactDiscoveryError and send it around
+        # the retry/DLQ loop. See _block_on_missing_llm_config's docstring.
+        await _block_on_missing_llm_config(payload, correlation_id)
+        return
     except ContactDiscoveryError:
         # Already normalized (carries a duck-typed error_code) — re-raise
         # unchanged so EventConsumer's retry/DLQ mechanism sees it.

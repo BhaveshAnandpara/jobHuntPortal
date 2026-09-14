@@ -23,6 +23,7 @@
  * Owner: frontend-profile-agent.
  */
 
+import { MemoryRouter } from 'react-router-dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -44,10 +45,30 @@ function renderResumesPage() {
   return render(
     <QueryClientProvider client={queryClient}>
       <IdentityProvider>
-        <Toaster />
-        <ResumesPage />
+        {/* A router only because the Task 10 gated state links to /settings
+            (react-router's `Link` throws outside one); every other state on
+            this page renders identically with or without it. */}
+        <MemoryRouter initialEntries={['/resumes']}>
+          <Toaster />
+          <ResumesPage />
+        </MemoryRouter>
       </IdentityProvider>
     </QueryClientProvider>,
+  )
+}
+
+/**
+ * No validated AI provider key — 404 is this endpoint's "unset is not an
+ * error" convention (docs/llm-provider-config/TECH.md, Task 6).
+ */
+function withNoLlmConfig() {
+  server.use(
+    http.get(`${API_BASE_URL}/users/me/llm-config`, () =>
+      HttpResponse.json(
+        { detail: { code: 'NOT_FOUND', message: 'No AI provider configured.' } },
+        { status: 404 },
+      ),
+    ),
   )
 }
 
@@ -796,5 +817,58 @@ describe('ResumesPage', () => {
     // Nothing on the row claims a score/percentage/rank the API never returned.
     expect(screen.queryByText(/%/)).not.toBeInTheDocument()
     expect(screen.queryByText(/match score/i)).not.toBeInTheDocument()
+  })
+
+  // --- Task 10 (docs/llm-provider-config/TECH.md): AI-provider-key gating ---
+
+  it('Task 10: replaces the upload action with a Settings CTA when no AI provider key is configured', async () => {
+    withNoLlmConfig()
+    server.use(
+      http.get(`${API_BASE_URL}/resumes`, () => HttpResponse.json([])),
+      http.get(`${API_BASE_URL}/profiles`, () => HttpResponse.json([])),
+    )
+
+    renderResumesPage()
+
+    expect(await screen.findByText('Add your AI provider key in Settings')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Go to Settings' })).toHaveAttribute('href', '/settings')
+    // No upload affordance at all — neither the header button nor the
+    // zero-resume empty state's CTA, both of which would 4xx.
+    expect(screen.queryByRole('button', { name: 'Upload resume' })).not.toBeInTheDocument()
+    expect(screen.queryByText('No resumes yet')).not.toBeInTheDocument()
+  })
+
+  it('Task 10: keeps existing resumes visible but disables Replace when no AI provider key is configured', async () => {
+    withNoLlmConfig()
+    server.use(
+      http.get(`${API_BASE_URL}/resumes`, () =>
+        HttpResponse.json([
+          { id: 'resume-1', user_id: 'user-1', file_name: 'existing.pdf', status: 'PARSED', uploaded_at: '2026-01-01T00:00:00Z' },
+        ]),
+      ),
+      http.get(`${API_BASE_URL}/profiles`, () => HttpResponse.json([])),
+    )
+
+    renderResumesPage()
+
+    expect(await screen.findByText('existing.pdf')).toBeInTheDocument()
+    expect(screen.getByText('Add your AI provider key in Settings')).toBeInTheDocument()
+    // Replace is an upload under the hood, so it is gated too; Delete needs
+    // no key and stays available.
+    expect(screen.getByRole('button', { name: 'Replace' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled()
+  })
+
+  it('Task 10: renders the upload action normally once a validated key exists', async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/resumes`, () => HttpResponse.json([])),
+      http.get(`${API_BASE_URL}/profiles`, () => HttpResponse.json([])),
+    )
+
+    renderResumesPage()
+
+    expect(await screen.findByText('No resumes yet')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Upload resume' }).length).toBeGreaterThan(0)
+    expect(screen.queryByText('Add your AI provider key in Settings')).not.toBeInTheDocument()
   })
 })

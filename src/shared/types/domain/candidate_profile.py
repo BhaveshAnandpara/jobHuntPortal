@@ -13,7 +13,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from shared.types.dto import EducationEntry
+from shared.types.dto import ContactInfo, EducationEntry, WorkExperienceEntry
 from shared.types.enums import ProfileStatus
 from shared.types.ids import ProfileId, ResumeId, UserId
 
@@ -24,11 +24,17 @@ class CandidateProfile(BaseModel):
     resume_id: ResumeId  # source resume
     title: str  # inferred label, e.g. "Java Backend Engineer"
     summary: str | None = None  # short inferred professional summary
+    # The candidate's own contact details as stated on the resume. `None`
+    # when the resume states none — never fabricated.
+    contact: ContactInfo | None = None
     skills: list[str] = []  # may be empty list, never null
     experience_years: float | None = None  # total relevant experience
     # deliberately not an enum — seniority vocabulary varies by profession
     seniority: str | None = None
     education: list[EducationEntry] = []
+    # per-job employment history; free-text company/title/dates keeps this
+    # profession-independent, exactly like `skills` and `education`
+    work_history: list[WorkExperienceEntry] = []
     certifications: list[str] = []
     projects: list[str] = []  # short descriptions
     industries: list[str] = []  # inferred industry fit
