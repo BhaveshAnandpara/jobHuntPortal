@@ -417,6 +417,115 @@ def test_identity_fields_still_come_from_the_profile() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Alternative requirement groups ("Jest or Mocha")
+# ---------------------------------------------------------------------------
+
+
+def _profile_with_skills(*skills: str):
+    return make_resume_profile(UserId(uuid4())).model_copy(update={"skills": list(skills)})
+
+
+def test_prompt_asks_for_alternative_groups() -> None:
+    assert "alternative_groups" in _prompt_fixture()
+
+
+def test_an_unused_alternative_is_dropped_from_the_gaps() -> None:
+    """The reported bug: 'Jest or Mocha' with Jest matched must not leave
+    Mocha listed as a gap.
+    """
+    score = to_profile_match_score(
+        _profile_with_skills("Jest"),
+        _output(
+            matched_skills=["Jest"],
+            missing_skills=["Mocha", "Kubernetes"],
+            alternative_groups=[["Jest", "Mocha"]],
+        ),
+    )
+
+    assert score.matched_skills == ["Jest"]
+    assert score.missing_skills == ["Kubernetes"]
+
+
+def test_matching_is_case_and_whitespace_insensitive() -> None:
+    score = to_profile_match_score(
+        _profile_with_skills(),
+        _output(
+            matched_skills=["jest"],
+            missing_skills=["  MOCHA "],
+            alternative_groups=[["Jest", "Mocha"]],
+        ),
+    )
+
+    assert score.missing_skills == []
+
+
+def test_an_option_the_profile_has_counts_even_if_the_model_missed_it() -> None:
+    """The model listed both as gaps, but the profile itself has Playwright:
+    the group is satisfied, the gap goes, and the match is shown.
+    """
+    score = to_profile_match_score(
+        _profile_with_skills("Playwright"),
+        _output(
+            matched_skills=[],
+            missing_skills=["Cypress", "Playwright"],
+            alternative_groups=[["Cypress", "Playwright"]],
+        ),
+    )
+
+    assert score.missing_skills == []
+    assert score.matched_skills == ["Playwright"]
+
+
+def test_an_unsatisfied_group_collapses_into_one_gap() -> None:
+    score = to_profile_match_score(
+        _profile_with_skills("Docker"),
+        _output(
+            matched_skills=["Docker"],
+            missing_skills=["ChatGPT", "GitHub Copilot", "Claude", "Kafka"],
+            alternative_groups=[["ChatGPT", "GitHub Copilot", "Claude"]],
+        ),
+    )
+
+    assert score.missing_skills == ["ChatGPT or GitHub Copilot or Claude", "Kafka"]
+
+
+def test_a_lone_gap_in_an_unsatisfied_group_is_left_alone() -> None:
+    score = to_profile_match_score(
+        _profile_with_skills(),
+        _output(
+            matched_skills=[],
+            missing_skills=["Mocha"],
+            alternative_groups=[["Jest", "Mocha"]],
+        ),
+    )
+
+    assert score.missing_skills == ["Mocha"]
+
+
+def test_groups_do_not_touch_unrelated_skills_or_the_score() -> None:
+    profile = _profile_with_skills("Jest")
+    skills = {"matched_skills": ["Jest", "CAD"], "missing_skills": ["Mocha", "FEA"]}
+    plain = to_profile_match_score(profile, _output(**skills))
+    grouped = to_profile_match_score(
+        profile, _output(**skills, alternative_groups=[["Jest", "Mocha"]])
+    )
+
+    assert grouped.score == plain.score
+    assert grouped.matched_skills == ["Jest", "CAD"]
+    assert grouped.missing_skills == ["FEA"]
+
+
+def test_no_groups_leaves_the_model_lists_exactly_as_they_were() -> None:
+    score = to_profile_match_score(
+        _profile_with_skills("Jest"),
+        _output(matched_skills=["Jest"], missing_skills=["Mocha"]),
+    )
+
+    assert score.matched_skills == ["Jest"]
+    assert score.missing_skills == ["Mocha"]
+
+
+# ---------------------------------------------------------------------------
 # Backward compatibility of the persisted shape
 # ---------------------------------------------------------------------------
 

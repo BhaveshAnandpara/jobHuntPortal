@@ -63,6 +63,10 @@ class ProfileScoringOutput(BaseModel):
     overall_score: float = Field(ge=0.0, le=1.0)
     matched_skills: list[str] = []
     missing_skills: list[str] = []
+    # Each inner list is one set of interchangeable options the posting
+    # offers ("Jest or Mocha"). Used by `_resolve_alternative_groups`, which
+    # enforces in code what the prompt only asks for.
+    alternative_groups: list[list[str]] = []
     reasoning: str = ""
     hard_blocker: str | None = None
     insufficient_detail: bool = False
@@ -320,6 +324,11 @@ def build_scoring_prompt(
         "- matched_skills: actual job requirements/capabilities that the candidate "
         "satisfies, including clearly transferable equivalents where appropriate.\n"
         "- missing_skills: genuine unsatisfied required/preferred capabilities only.\n"
+        "- alternative_groups: one list per set of interchangeable options the "
+        "posting offers ('Jest or Mocha', 'AWS/GCP/Azure', 'tools such as "
+        "ChatGPT, Copilot, Claude'). Put each option as its own short skill "
+        "name, spelled as it appears in matched_skills/missing_skills. Leave "
+        "it empty when the posting names no alternatives.\n"
         "- reasoning: a concise explanation of the strongest fit signals, important "
         "gaps, and how alternative/transferable requirements affected the judgement. "
         "Write it for the candidate to read: two to four plain sentences, no "
@@ -368,23 +377,85 @@ def _cleaned_blocker(raw: str | None) -> str | None:
     return blocker
 
 
+def _normalized(skill: str) -> str:
+    return " ".join(skill.casefold().split())
+
+
+def _resolve_alternative_groups(
+    matched: list[str],
+    missing: list[str],
+    groups: list[list[str]],
+    profile_skills: list[str],
+) -> tuple[list[str], list[str]]:
+    """Make the skill lists agree with the posting's "X or Y" groups.
+
+    The prompt asks the model to do this itself, but a model that lists
+    "Jest" as matched and "Mocha" as a gap for a "Jest or Mocha" requirement
+    contradicts the posting, so the rule is applied here regardless of what
+    the model did:
+
+    - a group with a satisfied option (in `matched` or on the profile) drops
+      its other options from `missing`, and shows the satisfied option in
+      `matched` if the model had left it out;
+    - a group with no satisfied option collapses the options the model
+      listed as gaps into one "A or B" entry, since only one is needed.
+
+    Nothing profession-specific: it only compares the strings it is given.
+    """
+    satisfied = {_normalized(skill) for skill in matched} | {
+        _normalized(skill) for skill in profile_skills
+    }
+    matched = list(matched)
+    missing = list(missing)
+
+    for group in groups:
+        options = [option.strip() for option in group if option.strip()]
+        if len({_normalized(option) for option in options}) < 2:
+            continue
+        keys = {_normalized(option) for option in options}
+        winners = [option for option in options if _normalized(option) in satisfied]
+
+        if winners:
+            missing = [skill for skill in missing if _normalized(skill) not in keys]
+            if not any(_normalized(skill) in keys for skill in matched):
+                matched.append(winners[0])
+            continue
+
+        listed = [skill for skill in missing if _normalized(skill) in keys]
+        if len(listed) < 2:
+            continue
+        first = next(i for i, skill in enumerate(missing) if _normalized(skill) in keys)
+        collapsed = " or ".join(listed)
+        missing = [skill for skill in missing if _normalized(skill) not in keys]
+        missing.insert(first, collapsed)
+
+    return matched, missing
+
+
 def to_profile_match_score(
     profile: ResumeProfile, output: ProfileScoringOutput
 ) -> ProfileMatchScore:
     """Project the LLM's output onto the canonical `ProfileMatchScore`.
 
     `reasoning`, `hard_blocker` and `insufficient_detail` are carried
-    through rather than dropped. They are explanation only: `score`,
-    `matched_skills` and `missing_skills` are computed exactly as before,
-    and in particular a `hard_blocker` does not clamp or otherwise alter
-    `score`.
+    through rather than dropped. They are explanation only: they never
+    alter `score`, `matched_skills` or `missing_skills`, and in particular a
+    `hard_blocker` does not clamp `score`. The skill lists are the model's,
+    reconciled with its own `alternative_groups` (see
+    `_resolve_alternative_groups`); `score` is never touched by that.
     """
+    matched, missing = _resolve_alternative_groups(
+        output.matched_skills,
+        output.missing_skills,
+        output.alternative_groups,
+        profile.skills,
+    )
     return ProfileMatchScore(
         profile_id=profile.profile_id,
         resume_id=profile.resume_id,
         score=max(0.0, min(1.0, output.overall_score)),
-        matched_skills=output.matched_skills,
-        missing_skills=output.missing_skills,
+        matched_skills=matched,
+        missing_skills=missing,
         reasoning=output.reasoning.strip(),
         hard_blocker=_cleaned_blocker(output.hard_blocker),
         insufficient_detail=output.insufficient_detail,
